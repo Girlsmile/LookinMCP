@@ -1,5 +1,7 @@
 # LookinMCP MVP
 
+[中文](README.md) | [English](README.en.md)
+
 > **项目来源说明**
 >
 > 本项目基于上游开源项目 [hughkli/Lookin](https://github.com/hughkli/Lookin) 进行研究、适配与扩展，当前仓库主要聚焦于 Lookin Desktop 与 MCP 能力的集成、打包和接入流程。
@@ -38,8 +40,8 @@ Lookin mac 端在切换 app、reload hierarchy、detail 同步完成后，会自
 
 普通用户优先走安装路径，不需要先执行 `swift build`：
 
-- DMG 下载：<https://github.com/Girlsmile/LookinMCP/releases>
-- 仓库地址：<https://github.com/Girlsmile/LookinMCP>
+- [Release 页面（DMG 下载入口）](https://github.com/Girlsmile/LookinMCP/releases)
+- [仓库地址](https://github.com/Girlsmile/LookinMCP)
 
 1. 获取发布好的 `Lookin.app` 或 `LookinMCP.dmg`
 2. 安装并启动 Lookin

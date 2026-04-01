@@ -1,0 +1,143 @@
+# LookinMCP MVP
+
+[中文](README.md) | [English](README.en.md)
+
+> **Project Origin**
+>
+> This repository is based on the upstream open-source project [hughkli/Lookin](https://github.com/hughkli/Lookin). It focuses on research, adaptation, and extension work around integrating Lookin Desktop with MCP, along with packaging and onboarding workflows.
+>
+> **Disclaimer**
+>
+> This repository is provided for technical research, learning, and compatibility evaluation only. All related code, trademarks, UI designs, and intellectual property remain the property of the original project author and respective rights holders. If any content in this repository is considered infringing, unauthorized, or otherwise problematic, rights holders may contact the maintainers through GitHub Issues or other repository contact channels, and the relevant content will be reviewed and handled promptly.
+
+This is an MCP implementation built on top of local Lookin Desktop snapshots. The main path no longer relies on an external client spawning a one-off `stdio` process. Instead, Lookin Desktop hosts a local MCP server and exposes a stable localhost endpoint that clients can reconnect to.
+
+## Structure
+
+- `Lookin/`: macOS Lookin client source, responsible for connecting to the iOS app and exporting snapshots.
+- `Sources/LookinMCPServer/`: Swift MCP core, `stdio` debug entry, and local HTTP host.
+- `LookinServer/`: upstream iOS runtime and shared models; MCP no longer connects to it directly.
+- `openspec/changes/add-lookin-desktop-mcp-host/`: design, spec, and task artifacts for the desktop-hosted MCP server and toolbar status UI.
+
+## Local Snapshot Directory
+
+Default location:
+
+```text
+~/Library/Application Support/LookinMCP/
+  current/
+    snapshot.json
+    screenshot.png
+  history/
+    <timestamp>/
+      snapshot.json
+      screenshot.png
+```
+
+Lookin Desktop refreshes `current` after app switching, hierarchy reload, and detail sync, while keeping recent snapshot history.
+
+## Install and Connect
+
+Regular users should use the packaged app path instead of running `swift build` first:
+
+- [Releases page (DMG download entry)](https://github.com/Girlsmile/LookinMCP/releases)
+- [Repository](https://github.com/Girlsmile/LookinMCP)
+
+1. Download the packaged `Lookin.app` or `LookinMCP.dmg`
+2. Install and launch Lookin
+3. Confirm the top `MCP` status is available
+4. Connect your MCP client to `http://127.0.0.1:3846/mcp`
+
+For detailed onboarding, see `docs/MCP安装接入指南.md`.
+
+## Developer Build
+
+If you are working on the repository itself, the main commands are:
+
+```bash
+swift build
+swift test
+```
+
+To debug MCP manually:
+
+```bash
+.build/debug/lookin-mcp --transport http --port 3846
+```
+
+## Lookin Desktop Hosted MCP
+
+- The static main window now includes an `MCP` button in the toolbar.
+- Opening the main window attempts to start the local host automatically; it can also be started or stopped explicitly from the popover.
+- Fixed endpoint: `http://127.0.0.1:3846/mcp`
+- Status endpoint: `http://127.0.0.1:3846/status`
+- When Lookin exits, it stops the child process and frees the port. After restart, clients should reconnect to the same address.
+
+### Toolbar States
+
+- `Off`: MCP host is not running
+- `Starting`: Lookin started the helper and is waiting for `/status`
+- `Ready`: service is online and the snapshot is fresh
+- `Connected`: there has been a successful MCP request in the recent window
+- `Stale`: service is online but the snapshot is missing or outdated
+- `Error`: process exit, port conflict, or status check failure
+
+## Supported Tools
+
+- `lookin.list_snapshots`: list readable snapshots from `current` and `history`
+- `lookin.get_latest_snapshot`: return the full latest structured snapshot
+- `lookin.find_nodes`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`
+- `lookin.get_node_details`: return the node itself, its parent, and direct children
+- `lookin.get_node_relations`: return parent/child/sibling relations, spacing, and alignment data
+- `lookin.get_subtree`: expand a local subtree
+- `lookin.crop_screenshot`: crop a local screenshot for a node
+- `lookin.query_snapshot`: run deterministic snapshot queries and return layout evidence plus tree excerpts
+
+## Key Evidence in Responses
+
+- `frame` / `bounds` / `frame_to_root`: size, local coordinates, and root-relative coordinates
+- `layout_evidence`: intrinsic size, hugging/compression priorities, and readable constraint summaries
+- `visual_evidence`: hidden state, opacity, interaction, masks, colors, borders, corner radius, shadow, tint, and tags
+- `tree_excerpt`: nearby ancestors and subtree context for layout reasoning
+
+Color values are returned in structured form, for example:
+
+```json
+{
+  "hex_string": "#ff0000",
+  "rgba_string": "(255, 0, 0, 1.00)",
+  "components": [1, 0, 0, 1]
+}
+```
+
+## Current Limitations
+
+- Read-only only; no attribute mutation, method invocation, or Lookin GUI control
+- The repository now includes app-bundled helper packaging scripts, but public distribution still depends on signing, notarization, and release management
+- `get_latest_snapshot` returns the full JSON, which can be large on complex screens
+- The real workflow depends on running this modified Lookin build, not the original upstream binary
+
+## Client Example
+
+CodexCLI can connect with:
+
+```toml
+[mcp_servers.lookin-desktop]
+url = "http://127.0.0.1:3846/mcp"
+```
+
+Any MCP client with HTTP support should use the same endpoint. Do not depend on random ports. After Lookin restarts, reconnect to `http://127.0.0.1:3846/mcp`.
+
+## LLM Prompt Guide
+
+- See `docs/LLM使用Prompt.md` for direct LLM usage guidance
+- It includes recommended tool order, reasoning constraints, and a copyable prompt template
+
+## Release Scripts
+
+- `scripts/release/build-lookin-mcp-release.sh`: build the release `lookin-mcp` helper
+- `scripts/release/assemble-lookin-app.sh`: inject the helper into `Lookin.app/Contents/PlugIns/`
+- `scripts/release/verify-lookin-release.sh`: verify the embedded helper and signing state
+- `scripts/release/package-lookin-release.sh`: run app build, helper injection, signing verification, and DMG generation
+
+For maintainer-facing packaging notes, see `docs/发布打包指南.md`.
