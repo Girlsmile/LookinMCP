@@ -107,3 +107,8 @@ url = "http://127.0.0.1:3846/mcp"
 ```
 
 其他支持 HTTP MCP 的客户端也应连接同一个地址。不要依赖随机端口；Lookin 重启后应继续按 `http://127.0.0.1:3846/mcp` 重连。
+
+## LLM Prompt 文档
+
+- 面向 CodexCLI / 其他 Agent 的直接使用说明见 `docs/LLM使用Prompt.md`
+- 该文档给出了推荐 tool 调用顺序、判断准则和可直接复制的 Prompt 模板
