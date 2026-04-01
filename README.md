@@ -40,7 +40,8 @@ Lookin mac 端在切换 app、reload hierarchy、detail 同步完成后，会自
 
 普通用户优先走安装路径，不需要先执行 `swift build`：
 
-- [Release 页面（DMG 下载入口）](https://github.com/Girlsmile/LookinMCP/releases)
+- 本地 DMG 产物路径：`build/release/output/LookinMCP.dmg`
+- [Release 页面（如已上传，可在此下载 DMG）](https://github.com/Girlsmile/LookinMCP/releases)
 - [仓库地址](https://github.com/Girlsmile/LookinMCP)
 
 1. 获取发布好的 `Lookin.app` 或 `LookinMCP.dmg`
