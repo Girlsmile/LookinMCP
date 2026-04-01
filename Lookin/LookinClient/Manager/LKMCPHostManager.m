@@ -9,11 +9,19 @@
 NSNotificationName const LKMCPHostManagerDidUpdateNotification = @"LKMCPHostManagerDidUpdateNotification";
 
 static NSString * const LKMCPHost = @"127.0.0.1";
+static NSString * const LKMCPBundledExecutableName = @"lookin-mcp";
 static uint16_t const LKMCPPort = 3846;
 static NSTimeInterval const LKMCPPollInterval = 2;
 static NSInteger const LKMCPMaxConsecutiveStatusFailures = 3;
 static NSTimeInterval const LKMCPReconnectBaseDelay = 1;
 static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
+
+static void LKMCPHostLog(NSString *message) {
+    if (message.length == 0) {
+        return;
+    }
+    NSLog(@"[LookinMCPHost] %@", message);
+}
 
 @interface LKMCPHostManager ()
 
@@ -83,11 +91,13 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
         return;
     }
 
-    NSString *executablePath = [self _resolveExecutablePath];
+    NSString *resolutionMessage = nil;
+    NSString *executablePath = [self _resolveExecutablePathWithErrorMessage:&resolutionMessage];
     if (!executablePath) {
-        [self _applyLocalError:@"未找到 lookin-mcp 可执行文件。请先执行 `swift build`，或设置环境变量 LOOKIN_MCP_EXECUTABLE。"];
+        [self _applyLocalError:resolutionMessage ?: @"未找到 lookin-mcp 可执行文件。发布版请确认 Lookin.app 已内嵌 helper；开发态请先执行 `swift build`，或设置环境变量 LOOKIN_MCP_EXECUTABLE。"];
         return;
     }
+    LKMCPHostLog([NSString stringWithFormat:@"使用 helper: %@", executablePath]);
 
     self.stopRequestedByUser = NO;
     self.restartPending = NO;
@@ -131,7 +141,9 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
     @try {
         [task launch];
     } @catch (NSException *exception) {
-        [self _applyLocalError:[NSString stringWithFormat:@"启动失败：%@", exception.reason ?: @"未知异常"]];
+        NSString *message = [NSString stringWithFormat:@"MCP helper 启动失败：%@", exception.reason ?: @"未知异常"];
+        LKMCPHostLog(message);
+        [self _applyLocalError:message];
         return;
     }
 
@@ -323,6 +335,7 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
     if (trimmed.length == 0) {
         return;
     }
+    LKMCPHostLog([NSString stringWithFormat:@"helper stderr: %@", trimmed]);
     self.lastErrorText = trimmed;
     if (self.state != LKMCPHostStateStarting) {
         [self _notify];
@@ -396,10 +409,37 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
     [[NSNotificationCenter defaultCenter] postNotificationName:LKMCPHostManagerDidUpdateNotification object:self];
 }
 
-- (NSString *)_resolveExecutablePath {
+- (NSString *)_resolveExecutablePathWithErrorMessage:(NSString * _Nullable __autoreleasing *)errorMessage {
+    NSFileManager *fileManager = NSFileManager.defaultManager;
     NSString *fromEnv = NSProcessInfo.processInfo.environment[@"LOOKIN_MCP_EXECUTABLE"];
-    if ([self.class _isExecutableFile:fromEnv]) {
-        return fromEnv;
+    if (fromEnv.length > 0) {
+        NSString *candidate = [fromEnv stringByStandardizingPath];
+        BOOL isDirectory = NO;
+        if ([fileManager fileExistsAtPath:candidate isDirectory:&isDirectory]) {
+            if (!isDirectory && [fileManager isExecutableFileAtPath:candidate]) {
+                return candidate;
+            }
+            if (errorMessage) {
+                *errorMessage = [NSString stringWithFormat:@"`LOOKIN_MCP_EXECUTABLE` 指向的文件不可执行：%@", candidate];
+            }
+        } else if (errorMessage) {
+            *errorMessage = [NSString stringWithFormat:@"`LOOKIN_MCP_EXECUTABLE` 指向的文件不存在：%@", candidate];
+        }
+        return nil;
+    }
+
+    NSString *bundledPath = [self.class _bundledExecutablePath];
+    NSString *bundledError = nil;
+    if (bundledPath.length > 0) {
+        BOOL isDirectory = NO;
+        if ([fileManager fileExistsAtPath:bundledPath isDirectory:&isDirectory]) {
+            if (!isDirectory && [fileManager isExecutableFileAtPath:bundledPath]) {
+                return bundledPath;
+            }
+            bundledError = [NSString stringWithFormat:@"Lookin.app 内嵌 MCP helper 不可执行：%@", bundledPath];
+        } else if ([self.class _mainBundleLooksLikeApp]) {
+            bundledError = [NSString stringWithFormat:@"Lookin.app 缺少内嵌 MCP helper：%@", bundledPath];
+        }
     }
 
     NSMutableOrderedSet<NSString *> *searchRoots = [NSMutableOrderedSet orderedSet];
@@ -421,6 +461,9 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
         }
     }
 
+    if (errorMessage) {
+        *errorMessage = bundledError ?: @"未找到 lookin-mcp 可执行文件。发布版请确认 Lookin.app 已内嵌 helper；开发态请先执行 `swift build`，或设置环境变量 LOOKIN_MCP_EXECUTABLE。";
+    }
     return nil;
 }
 
@@ -429,6 +472,19 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
         return NO;
     }
     return [[NSFileManager defaultManager] isExecutableFileAtPath:path];
+}
+
++ (BOOL)_mainBundleLooksLikeApp {
+    NSString *bundlePath = [NSBundle mainBundle].bundlePath;
+    return [[bundlePath pathExtension].lowercaseString isEqualToString:@"app"];
+}
+
++ (NSString *)_bundledExecutablePath {
+    NSString *pluginsPath = [[NSBundle mainBundle] builtInPlugInsPath];
+    if (pluginsPath.length == 0) {
+        return nil;
+    }
+    return [pluginsPath stringByAppendingPathComponent:LKMCPBundledExecutableName];
 }
 
 + (NSArray<NSString *> *)_candidateExecutablePathsFromSeedPath:(NSString *)seedPath {
@@ -450,10 +506,6 @@ static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
         cursor = [cursor stringByDeletingLastPathComponent];
     }
 
-    NSString *pluginsPath = [[NSBundle mainBundle] builtInPlugInsPath];
-    if (pluginsPath.length > 0) {
-        [ret addObject:[pluginsPath stringByAppendingPathComponent:@"lookin-mcp"]];
-    }
     return ret.array;
 }
 

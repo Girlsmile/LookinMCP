@@ -501,6 +501,51 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(status["snapshot_is_stale"] as? Bool, true)
     }
 
+    func testAssembleReleaseAppEmbedsHelperAndVerifyPasses() throws {
+        let root = makeTemporaryDirectory()
+        let appURL = try makeFakeLookinApp(in: root)
+        let helperURL = try makeExecutableScript(
+            at: root.appendingPathComponent("lookin-mcp"),
+            body: "#!/bin/bash\necho embedded helper\n"
+        )
+
+        let assembleScript = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("scripts/release/assemble-lookin-app.sh")
+        let verifyScript = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("scripts/release/verify-lookin-release.sh")
+
+        try runProcess(
+            executableURL: assembleScript,
+            arguments: ["--app", appURL.path, "--helper", helperURL.path]
+        )
+
+        let embeddedHelper = appURL.appendingPathComponent("Contents/PlugIns/lookin-mcp")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: embeddedHelper.path))
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: embeddedHelper.path))
+
+        try runProcess(
+            executableURL: verifyScript,
+            arguments: ["--app", appURL.path]
+        )
+    }
+
+    func testVerifyReleaseFailsWhenHelperMissing() throws {
+        let root = makeTemporaryDirectory()
+        let appURL = try makeFakeLookinApp(in: root)
+        let verifyScript = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("scripts/release/verify-lookin-release.sh")
+
+        XCTAssertThrowsError(
+            try runProcess(
+                executableURL: verifyScript,
+                arguments: ["--app", appURL.path]
+            )
+        ) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("Embedded helper missing"))
+        }
+    }
+
     private func invokeServer(with request: [String: Any], snapshotRoot: URL) throws -> [String: Any] {
         let executableURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent(".build/debug/lookin-mcp")
@@ -942,5 +987,67 @@ final class LookinMCPServerTests: XCTestCase {
             return
         }
         try pngData.write(to: url)
+    }
+
+    private func makeFakeLookinApp(in root: URL) throws -> URL {
+        let appURL = root.appendingPathComponent("Lookin.app", isDirectory: true)
+        let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
+        let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+
+        let executableURL = try makeExecutableScript(
+            at: macOSURL.appendingPathComponent("Lookin"),
+            body: "#!/bin/bash\nsleep 1\n"
+        )
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: executableURL.path))
+
+        let infoPlistURL = contentsURL.appendingPathComponent("Info.plist")
+        let infoPlist: [String: Any] = [
+            "CFBundleExecutable": "Lookin",
+            "CFBundleIdentifier": "com.example.Lookin",
+            "CFBundleName": "Lookin",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: infoPlist, format: .xml, options: 0)
+        try data.write(to: infoPlistURL)
+        return appURL
+    }
+
+    @discardableResult
+    private func makeExecutableScript(at url: URL, body: String) throws -> URL {
+        guard let data = body.data(using: .utf8) else {
+            throw NSError(domain: "LookinMCPServerTests", code: 99, userInfo: [NSLocalizedDescriptionKey: "无法编码脚本文本"])
+        }
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func runProcess(executableURL: URL, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            let stderr = String(decoding: stderrPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let stdout = String(decoding: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            throw NSError(
+                domain: "LookinMCPServerTests",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: [stderr, stdout].filter { !$0.isEmpty }.joined(separator: "\n")
+                ]
+            )
+        }
     }
 }

@@ -1,5 +1,13 @@
 # LookinMCP MVP
 
+> **项目来源说明**
+>
+> 本项目基于上游开源项目 [hughkli/Lookin](https://github.com/hughkli/Lookin) 进行研究、适配与扩展，当前仓库主要聚焦于 Lookin Desktop 与 MCP 能力的集成、打包和接入流程。
+>
+> **免责声明**
+>
+> 本仓库仅用于技术研究、学习交流与兼容性验证，相关代码、商标、界面设计及其知识产权归原项目作者及其权利人所有。如本仓库中的任何内容涉及侵权、授权范围不清或其他权利问题，请权利人通过 GitHub Issue 或仓库维护者联系渠道告知，我们将在核实后及时处理、修改或移除相关内容。
+
 这是一个基于 Lookin mac 端本地 snapshot 的 MCP 实现。当前主路径不再让外部客户端自己拉起一次性的 `stdio` 进程，而是由 Lookin Desktop 托管本地 MCP host，对外暴露固定地址，客户端只需要重连同一个 localhost URL。
 
 ## 当前结构
@@ -26,23 +34,33 @@
 
 Lookin mac 端在切换 app、reload hierarchy、detail 同步完成后，会自动刷新 `current`，并保留最近的历史快照。
 
-## 构建与运行
+## 安装与接入
+
+普通用户优先走安装路径，不需要先执行 `swift build`：
+
+- DMG 下载：<https://github.com/Girlsmile/LookinMCP/releases>
+- 仓库地址：<https://github.com/Girlsmile/LookinMCP>
+
+1. 获取发布好的 `Lookin.app` 或 `LookinMCP.dmg`
+2. 安装并启动 Lookin
+3. 确认顶部 `MCP` 状态为可用
+4. 在 MCP client 中连接 `http://127.0.0.1:3846/mcp`
+
+详细步骤见 `docs/MCP安装接入指南.md`。
+
+## 开发者构建
+
+如果你是仓库开发者，只需要两类命令：
 
 ```bash
 swift build
-.build/debug/lookin-mcp
+swift test
 ```
 
-保留 `stdio` 调试入口：
+如需手动调试 MCP：
 
 ```bash
-LOOKIN_SNAPSHOT_ROOT=/tmp/lookin-fixture .build/debug/lookin-mcp
-```
-
-调试本地 HTTP host：
-
-```bash
-LOOKIN_SNAPSHOT_ROOT=/tmp/lookin-fixture .build/debug/lookin-mcp --transport http --port 3846
+.build/debug/lookin-mcp --transport http --port 3846
 ```
 
 ## Lookin Desktop 内置 Host
@@ -93,7 +111,7 @@ LOOKIN_SNAPSHOT_ROOT=/tmp/lookin-fixture .build/debug/lookin-mcp --transport htt
 ## 当前限制
 
 - 只读，不支持改属性、调方法或控制 Lookin GUI。
-- 当前 host 可由 toolbar 启停，但可执行文件仍默认从 `LOOKIN_MCP_EXECUTABLE` 或仓库内 `.build/debug/lookin-mcp` 解析；尚未做 app bundle 内嵌 helper 分发。
+- 当前仓库已经提供 app bundle 内嵌 helper 的发布脚本，但正式公开分发仍取决于签名、notarize 和发布产物管理。
 - `get_latest_snapshot` 直接返回完整 JSON，大页面下响应体会较大。
 - 真实链路依赖你运行的是这份修改后的 Lookin.app，而不是旧版本二进制。
 
@@ -112,3 +130,12 @@ url = "http://127.0.0.1:3846/mcp"
 
 - 面向 CodexCLI / 其他 Agent 的直接使用说明见 `docs/LLM使用Prompt.md`
 - 该文档给出了推荐 tool 调用顺序、判断准则和可直接复制的 Prompt 模板
+
+## 发布脚本
+
+- `scripts/release/build-lookin-mcp-release.sh`：构建 release 版 `lookin-mcp`
+- `scripts/release/assemble-lookin-app.sh`：将 helper 注入 `Lookin.app/Contents/PlugIns/`
+- `scripts/release/verify-lookin-release.sh`：校验 app 内嵌 helper 和签名状态
+- `scripts/release/package-lookin-release.sh`：串联 app 构建、helper 注入、签名校验和 dmg 生成
+
+面向发布者的说明见 `docs/发布打包指南.md`。
