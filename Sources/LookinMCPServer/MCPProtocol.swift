@@ -79,6 +79,29 @@ enum JSONValue: Codable {
     case array([JSONValue])
     case null
 
+    init(foundationValue: Any) {
+        switch foundationValue {
+        case let value as JSONValue:
+            self = value
+        case let value as String:
+            self = .string(value)
+        case let value as NSNumber:
+            if CFGetTypeID(value) == CFBooleanGetTypeID() {
+                self = .bool(value.boolValue)
+            } else {
+                self = .number(value.doubleValue)
+            }
+        case let value as [String: Any]:
+            self = .object(value.mapValues(JSONValue.init(foundationValue:)))
+        case let value as [Any]:
+            self = .array(value.map(JSONValue.init(foundationValue:)))
+        case _ as NSNull:
+            self = .null
+        default:
+            self = .string(String(describing: foundationValue))
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
@@ -203,6 +226,16 @@ extension Encodable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(AnyEncodable(self))
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+extension Encodable {
+    /// 将 Encodable 编码为 JSONValue，便于直接拼装 MCP JSON-RPC 响应。
+    func jsonValue() throws -> JSONValue {
+        let encoder = JSONEncoder.lookinJSONEncoder()
+        let data = try encoder.encode(AnyEncodable(self))
+        let object = try JSONSerialization.jsonObject(with: data, options: [])
+        return JSONValue(foundationValue: object)
     }
 }
 

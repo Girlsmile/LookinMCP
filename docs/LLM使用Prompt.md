@@ -4,18 +4,18 @@
 
 ## 推荐调用顺序
 
-1. 先用 `lookin.find_nodes` 按 `ivar_name`、`vc_name`、`class_name` 或 `text` 定位目标节点。
-2. 对命中节点调用 `lookin.get_node_details`，读取节点本体、父节点和直接子节点。
-3. 再调用 `lookin.get_node_relations`，分析父子、兄弟、间距、对齐和包裹关系。
-4. 如果需要视觉证据，再调用 `lookin.crop_screenshot` 获取局部截图。
-5. 如果问题还不明确，可补充 `lookin.query_snapshot` 或 `lookin.get_subtree`。
+1. 先用 `lookin.screen` 或 `lookin.find` 确认当前页面和目标节点。
+2. 对目标节点调用 `lookin.inspect`，默认先拿 compact 证据。
+3. 如果需要更多层级上下文，读取 inspect 返回的 subtree resource。
+4. 如果需要视觉证据，再调用 `lookin.capture` 或读取 capture resource。
+5. 如果要分析完整页面，再读取 raw resource，而不是默认请求整份 snapshot。
 
 ## 建议给 LLM 的任务约束
 
 - 优先基于 MCP 返回的结构化证据下结论，不要只凭截图猜测。
 - 必须引用具体字段，例如 `frame`、`constraints_summary`、`background_color`、`corner_radius`、`siblings`、`spacing`。
 - 先判断“事实是什么”，再判断“是否合理”，最后给出修改建议。
-- 如果证据不足，应明确说明还需要哪个 tool 的结果。
+- 如果证据不足，应明确说明还需要哪个 tool、resource 或 prompt 的结果。
 
 ## 可直接复制的 Prompt
 
@@ -27,10 +27,10 @@
 - 你需要判断这个节点及其周边 UI 是否存在布局、间距、颜色、层级或约束问题
 
 工作流程：
-1. 先调用 `lookin.find_nodes` 定位候选节点
-2. 对最相关节点调用 `lookin.get_node_details`
-3. 再调用 `lookin.get_node_relations`
-4. 必要时调用 `lookin.crop_screenshot`
+1. 先调用 `lookin.find` 定位候选节点
+2. 对最相关节点调用 `lookin.inspect`
+3. 如果需要更多层级上下文，读取 inspect 返回的 subtree resource
+4. 必要时调用 `lookin.capture`
 
 输出要求：
 - 先列出你确认到的事实证据
@@ -38,6 +38,12 @@
 - 每个问题都要绑定具体字段或截图区域
 - 如果无法下结论，明确说明缺少什么信息
 ```
+
+## 内置 Prompts
+
+- `analyze-node-layout`：适合先看布局和约束。
+- `analyze-node-visual-style`：适合先看颜色、圆角、边框、阴影。
+- `diagnose-spacing-and-alignment`：适合聚焦 sibling gap、parent inset 和对齐偏差。
 
 ## 适用场景
 

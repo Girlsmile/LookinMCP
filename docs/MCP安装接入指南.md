@@ -56,7 +56,7 @@ enabled = true
 tool_timeout_sec = 10000
 ```
 
-重启客户端后，应能看到 `lookin.find_nodes`、`lookin.get_node_details`、`lookin.get_node_relations` 等工具。
+重启客户端后，应能看到 `lookin.screen`、`lookin.find`、`lookin.inspect`、`lookin.capture`、`lookin.raw` 五个工具，以及对应的 resources / prompts。
 
 ## 5. 首次验证
 
@@ -64,8 +64,9 @@ tool_timeout_sec = 10000
 
 1. 在 Lookin 中连接到目标 iOS App，并确认已经抓到 hierarchy。
 2. 访问 `/status`，确认服务在线。
-3. 在 MCP 客户端里调用 `lookin.list_snapshots`。
-4. 再调用 `lookin.find_nodes`，确认能定位到界面节点。
+3. 在 MCP 客户端里调用 `lookin.screen`。
+4. 再调用 `lookin.find`，确认能定位到界面节点。
+5. 对一个节点调用 `lookin.inspect`，确认能拿到 `resource_links`。
 
 ## 开发者构建路径
 

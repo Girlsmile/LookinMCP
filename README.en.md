@@ -82,23 +82,50 @@ To debug MCP manually:
 - `Stale`: service is online but the snapshot is missing or outdated
 - `Error`: process exit, port conflict, or status check failure
 
-## Supported Tools
+## Current MCP Surface
 
-- `lookin.list_snapshots`: list readable snapshots from `current` and `history`
-- `lookin.get_latest_snapshot`: return the full latest structured snapshot
-- `lookin.find_nodes`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`
-- `lookin.get_node_details`: return the node itself, its parent, and direct children
-- `lookin.get_node_relations`: return parent/child/sibling relations, spacing, and alignment data
-- `lookin.get_subtree`: expand a local subtree
-- `lookin.crop_screenshot`: crop a local screenshot for a node
-- `lookin.query_snapshot`: run deterministic snapshot queries and return layout evidence plus tree excerpts
+### Tools
+
+- `lookin.screen`: return a compact page-level snapshot summary
+- `lookin.find`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`
+- `lookin.inspect`: inspect one node with layout, style, and relation evidence
+- `lookin.capture`: crop a local screenshot around a node
+- `lookin.raw`: fallback raw snapshot export, compact by default with a resource link
+
+### Resources
+
+- `lookin://snapshots/current/summary`
+- `lookin://snapshots/current/raw`
+- `lookin://snapshots/current/screenshot`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/subtree?...`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/capture?...`
+
+Heavy objects are no longer inlined by default through tools. The model should read resources on demand.
+
+### Prompts
+
+- `analyze-node-layout`
+- `analyze-node-visual-style`
+- `diagnose-spacing-and-alignment`
+
+Prompts describe the workflow. They do not inline the heavy snapshot payloads.
+
+## Migration from Legacy Tools
+
+- `lookin.list_snapshots` -> `lookin.screen` or `resources/list`
+- `lookin.get_latest_snapshot` -> `lookin.raw`
+- `lookin.find_nodes` / `lookin.query_snapshot` -> `lookin.find`
+- `lookin.get_node_details` / `lookin.get_node_relations` -> `lookin.inspect`
+- `lookin.get_subtree` -> `resources/read` with a subtree URI
+- `lookin.crop_screenshot` -> `lookin.capture`
 
 ## Key Evidence in Responses
 
 - `frame` / `bounds` / `frame_to_root`: size, local coordinates, and root-relative coordinates
 - `layout_evidence`: intrinsic size, hugging/compression priorities, and readable constraint summaries
 - `visual_evidence`: hidden state, opacity, interaction, masks, colors, borders, corner radius, shadow, tint, and tags
-- `tree_excerpt`: nearby ancestors and subtree context for layout reasoning
+- `relations`: parent/child/sibling metrics, insets, and alignment deltas
+- `resource_links`: follow-up entry points for raw snapshot, subtree, and cropped captures
 
 Color values are returned in structured form, for example:
 
@@ -114,7 +141,7 @@ Color values are returned in structured form, for example:
 
 - Read-only only; no attribute mutation, method invocation, or Lookin GUI control
 - The repository now includes app-bundled helper packaging scripts, but public distribution still depends on signing, notarization, and release management
-- `get_latest_snapshot` returns the full JSON, which can be large on complex screens
+- tools default to `compact`; use `detail=full` or read resources explicitly when more context is needed
 - The real workflow depends on running this modified Lookin build, not the original upstream binary
 
 ## Client Example
@@ -131,7 +158,7 @@ Any MCP client with HTTP support should use the same endpoint. Do not depend on 
 ## LLM Prompt Guide
 
 - See `docs/LLM使用Prompt.md` for direct LLM usage guidance
-- It includes recommended tool order, reasoning constraints, and a copyable prompt template
+- It includes the recommended tool/resource/prompt flow, reasoning constraints, and a copyable prompt template
 
 ## Release Scripts
 

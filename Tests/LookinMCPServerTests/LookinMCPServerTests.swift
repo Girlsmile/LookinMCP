@@ -33,11 +33,15 @@ final class LookinMCPServerTests: XCTestCase {
 
         let result = try XCTUnwrap(response["result"] as? [String: Any])
         let serverInfo = try XCTUnwrap(result["serverInfo"] as? [String: Any])
+        let capabilities = try XCTUnwrap(result["capabilities"] as? [String: Any])
         XCTAssertEqual(serverInfo["name"] as? String, "lookin-mcp")
         XCTAssertEqual(serverInfo["version"] as? String, "0.3.0")
+        XCTAssertNotNil(capabilities["tools"] as? [String: Any])
+        XCTAssertNotNil(capabilities["resources"] as? [String: Any])
+        XCTAssertNotNil(capabilities["prompts"] as? [String: Any])
     }
 
-    func testToolsListContainsLocalSnapshotTools() throws {
+    func testToolsListContainsUnifiedSurfaceTools() throws {
         let response = try invokeServer(
             with: [
                 "jsonrpc": "2.0",
@@ -52,25 +56,22 @@ final class LookinMCPServerTests: XCTestCase {
         let toolNames = Set(tools.compactMap { $0["name"] as? String })
 
         XCTAssertEqual(toolNames, [
-            "lookin.find_nodes",
-            "lookin.list_snapshots",
-            "lookin.get_latest_snapshot",
-            "lookin.get_node_details",
-            "lookin.get_node_relations",
-            "lookin.get_subtree",
-            "lookin.crop_screenshot",
-            "lookin.query_snapshot",
+            "lookin.screen",
+            "lookin.find",
+            "lookin.inspect",
+            "lookin.capture",
+            "lookin.raw",
         ])
     }
 
-    func testGetLatestSnapshotReturnsNoSnapshotErrorWhenEmpty() throws {
+    func testRawReturnsNoSnapshotErrorWhenEmpty() throws {
         let response = try invokeServer(
             with: [
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.get_latest_snapshot",
+                    "name": "lookin.raw",
                     "arguments": [:],
                 ],
             ],
@@ -81,7 +82,7 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(error["message"] as? String, "NO_SNAPSHOT_AVAILABLE: 未找到可读取的 snapshot.json。")
     }
 
-    func testListSnapshotsReturnsCurrentAndHistoryEntries() throws {
+    func testResourcesListReturnsSnapshotResources() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -104,23 +105,20 @@ final class LookinMCPServerTests: XCTestCase {
             with: [
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "tools/call",
-                "params": [
-                    "name": "lookin.list_snapshots",
-                    "arguments": [:],
-                ],
+                "method": "resources/list",
             ],
             snapshotRoot: root
         )
 
-        let payload = try parseToolPayload(response)
-        let snapshots = try XCTUnwrap(payload["snapshots"] as? [[String: Any]])
-        XCTAssertEqual(snapshots.count, 2)
-        XCTAssertEqual(snapshots.first?["snapshot_id"] as? String, "20260401T100000Z")
-        XCTAssertEqual(snapshots.first?["is_current"] as? Bool, true)
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let resources = try XCTUnwrap(result["resources"] as? [[String: Any]])
+        let uris = Set(resources.compactMap { $0["uri"] as? String })
+        XCTAssertTrue(uris.contains("lookin://snapshots/current/summary"))
+        XCTAssertTrue(uris.contains("lookin://snapshots/current/raw"))
+        XCTAssertTrue(uris.contains("lookin://snapshots/current/screenshot"))
     }
 
-    func testQuerySnapshotFiltersByVCAndIvar() throws {
+    func testFindFiltersByVCAndIvar() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -140,11 +138,12 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.query_snapshot",
+                    "name": "lookin.find",
                     "arguments": [
                         "vc_name": "HomeViewController",
                         "ivar_name": "titleLabel",
-                        "include_tree": true,
+                        "detail": "full",
+                        "include": ["style"],
                     ],
                 ],
             ],
@@ -153,20 +152,18 @@ final class LookinMCPServerTests: XCTestCase {
 
         let payload = try parseToolPayload(response)
         XCTAssertEqual(payload["match_count"] as? Int, 1)
+        XCTAssertEqual(payload["detail"] as? String, "full")
 
-        let matches = try XCTUnwrap(payload["matches"] as? [[String: Any]])
-        XCTAssertEqual(matches.first?["class_name"] as? String, "UILabel")
-        XCTAssertEqual(matches.first?["host_view_controller_name"] as? String, "HomeViewController")
-        let visualEvidence = try XCTUnwrap(matches.first?["visual_evidence"] as? [String: Any])
+        let nodes = try XCTUnwrap(payload["nodes"] as? [[String: Any]])
+        XCTAssertEqual(nodes.first?["class_name"] as? String, "UILabel")
+        XCTAssertEqual(nodes.first?["host_view_controller_name"] as? String, "HomeViewController")
+        let visualEvidence = try XCTUnwrap(nodes.first?["visual_evidence"] as? [String: Any])
         XCTAssertEqual(visualEvidence["masks_to_bounds"] as? Bool, false)
         let backgroundColor = try XCTUnwrap(visualEvidence["background_color"] as? [String: Any])
         XCTAssertEqual(backgroundColor["hex_string"] as? String, "#ff0000")
-
-        let treeExcerpt = try XCTUnwrap(payload["tree_excerpt"] as? [String])
-        XCTAssertTrue(treeExcerpt.contains(where: { $0.contains("UILabel") }))
     }
 
-    func testFindNodesReturnsMatchedByReasons() throws {
+    func testFindReturnsMatchedByReasons() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -204,7 +201,7 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.find_nodes",
+                    "name": "lookin.find",
                     "arguments": [
                         "vc_name": "HomeViewController",
                         "ivar_name": "topBar",
@@ -222,7 +219,7 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(Set(try XCTUnwrap(nodes.first?["matched_by"] as? [String])), ["vc_name", "ivar_name"])
     }
 
-    func testGetNodeDetailsReturnsParentAndChildren() throws {
+    func testInspectReturnsParentAndChildren() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -239,9 +236,11 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.get_node_details",
+                    "name": "lookin.inspect",
                     "arguments": [
                         "node_id": "oid:2",
+                        "detail": "full",
+                        "include": ["relations", "children", "style"],
                     ],
                 ],
             ],
@@ -253,15 +252,20 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(node["node_id"] as? String, "oid:2")
         XCTAssertEqual(node["class_name"] as? String, "UIView")
 
-        let parent = try XCTUnwrap(payload["parent"] as? [String: Any])
-        XCTAssertEqual(parent["node_id"] as? String, "oid:1")
+        let relations = try XCTUnwrap(payload["relations"] as? [String: Any])
+        let parent = try XCTUnwrap(relations["parent"] as? [String: Any])
+        let parentNode = try XCTUnwrap(parent["node"] as? [String: Any])
+        XCTAssertEqual(parentNode["node_id"] as? String, "oid:1")
 
         let children = try XCTUnwrap(payload["children"] as? [[String: Any]])
         XCTAssertEqual(children.count, 2)
         XCTAssertEqual(Set(children.compactMap { $0["node_id"] as? String }), ["oid:3", "oid:4"])
+
+        let visualEvidence = try XCTUnwrap(payload["visual_evidence"] as? [String: Any])
+        XCTAssertEqual(visualEvidence["corner_radius"] as? Double, 0)
     }
 
-    func testGetNodeRelationsReturnsInsetsAndSiblingMetrics() throws {
+    func testInspectReturnsInsetsAndSiblingMetrics() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -278,9 +282,11 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.get_node_relations",
+                    "name": "lookin.inspect",
                     "arguments": [
                         "node_id": "oid:3",
+                        "detail": "standard",
+                        "include": ["relations"],
                     ],
                 ],
             ],
@@ -288,29 +294,25 @@ final class LookinMCPServerTests: XCTestCase {
         )
 
         let payload = try parseToolPayload(response)
-        let withinParentInsets = try XCTUnwrap(payload["within_parent_insets"] as? [String: Any])
+        let relations = try XCTUnwrap(payload["relations"] as? [String: Any])
+        let withinParentInsets = try XCTUnwrap(relations["within_parent_insets"] as? [String: Any])
         XCTAssertEqual(withinParentInsets["left"] as? Double, 16)
         XCTAssertEqual(withinParentInsets["top"] as? Double, 4)
 
-        let parent = try XCTUnwrap(payload["parent"] as? [String: Any])
+        let parent = try XCTUnwrap(relations["parent"] as? [String: Any])
         let parentRelation = try XCTUnwrap(parent["relation"] as? [String: Any])
         XCTAssertEqual(parentRelation["relative_position"] as? String, "overlapping")
 
-        let siblings = try XCTUnwrap(payload["siblings"] as? [[String: Any]])
+        let siblings = try XCTUnwrap(relations["siblings"] as? [[String: Any]])
         XCTAssertEqual(siblings.count, 1)
         let siblingNode = try XCTUnwrap(siblings.first?["node"] as? [String: Any])
         XCTAssertEqual(siblingNode["node_id"] as? String, "oid:4")
         let siblingRelation = try XCTUnwrap(siblings.first?["relation"] as? [String: Any])
         XCTAssertEqual(siblingRelation["relative_position"] as? String, "right")
         XCTAssertEqual(siblingRelation["horizontal_gap"] as? Double, 84)
-
-        let children = try XCTUnwrap(payload["children"] as? [[String: Any]])
-        XCTAssertEqual(children.count, 1)
-        let childRelation = try XCTUnwrap(children.first?["relation"] as? [String: Any])
-        XCTAssertEqual(childRelation["relative_position"] as? String, "overlapping")
     }
 
-    func testGetSubtreeReturnsFlatHierarchy() throws {
+    func testResourceReadSubtreeReturnsFlatHierarchy() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -325,19 +327,15 @@ final class LookinMCPServerTests: XCTestCase {
             with: [
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "tools/call",
+                "method": "resources/read",
                 "params": [
-                    "name": "lookin.get_subtree",
-                    "arguments": [
-                        "node_id": "oid:2",
-                        "max_depth": 2,
-                    ],
+                    "uri": "lookin://snapshots/current/nodes/oid:2/subtree?max_depth=2&max_nodes=80",
                 ],
             ],
             snapshotRoot: root
         )
 
-        let payload = try parseToolPayload(response)
+        let payload = try parseResourcePayload(response)
         XCTAssertEqual(payload["root_node_id"] as? String, "oid:2")
         XCTAssertEqual(payload["returned_node_count"] as? Int, 4)
         let nodes = try XCTUnwrap(payload["nodes"] as? [[String: Any]])
@@ -347,7 +345,7 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(nodes.last?["depth"] as? Int, 2)
     }
 
-    func testCropScreenshotWritesPNG() throws {
+    func testCaptureWritesPNG() throws {
         let root = try makeSnapshotRoot()
         try writeSnapshot(
             at: root.appendingPathComponent("current/snapshot.json"),
@@ -365,7 +363,7 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.crop_screenshot",
+                    "name": "lookin.capture",
                     "arguments": [
                         "node_id": "oid:3",
                         "padding": 4,
@@ -383,6 +381,101 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertEqual(cropRect["y"] as? Double, 20)
         XCTAssertEqual(cropRect["width"] as? Double, 40)
         XCTAssertEqual(cropRect["height"] as? Double, 40)
+    }
+
+    func testPromptListAndGetExposeUIAnalysisWorkflows() throws {
+        let listResponse = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "prompts/list",
+            ],
+            snapshotRoot: makeTemporaryDirectory()
+        )
+
+        let listResult = try XCTUnwrap(listResponse["result"] as? [String: Any])
+        let prompts = try XCTUnwrap(listResult["prompts"] as? [[String: Any]])
+        XCTAssertEqual(Set(prompts.compactMap { $0["name"] as? String }), [
+            "analyze-node-layout",
+            "analyze-node-visual-style",
+            "diagnose-spacing-and-alignment",
+        ])
+
+        let getResponse = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "prompts/get",
+                "params": [
+                    "name": "analyze-node-layout",
+                    "arguments": [
+                        "node_id": "oid:topBar",
+                        "focus": "左右间距",
+                    ],
+                ],
+            ],
+            snapshotRoot: makeTemporaryDirectory()
+        )
+
+        let getResult = try XCTUnwrap(getResponse["result"] as? [String: Any])
+        let messages = try XCTUnwrap(getResult["messages"] as? [[String: Any]])
+        let content = try XCTUnwrap(messages.first?["content"] as? [String: Any])
+        let text = try XCTUnwrap(content["text"] as? String)
+        XCTAssertTrue(text.contains("lookin.inspect"))
+        XCTAssertTrue(text.contains("oid:topBar"))
+        XCTAssertTrue(text.contains("左右间距"))
+    }
+
+    func testInspectCompactAndFullDetailBehaviors() throws {
+        let root = try makeSnapshotRoot()
+        try writeSnapshot(
+            at: root.appendingPathComponent("current/snapshot.json"),
+            snapshotID: "20260401T125000Z",
+            capturedAt: "2026-04-01T12:50:00Z",
+            appName: "Demo",
+            bundleID: "com.demo.app",
+            nodes: makeRelationFixtureNodes()
+        )
+
+        let compactResponse = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.inspect",
+                    "arguments": [
+                        "node_id": "oid:2",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+        let compactPayload = try parseToolPayload(compactResponse)
+        XCTAssertNotNil(compactPayload["layout_evidence"] as? [String: Any])
+        XCTAssertNil(compactPayload["visual_evidence"])
+        XCTAssertNil(compactPayload["children"])
+
+        let fullResponse = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.inspect",
+                    "arguments": [
+                        "node_id": "oid:2",
+                        "detail": "full",
+                        "include": ["style", "children"],
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+        let fullPayload = try parseToolPayload(fullResponse)
+        XCTAssertNotNil(fullPayload["visual_evidence"] as? [String: Any])
+        let children = try XCTUnwrap(fullPayload["children"] as? [[String: Any]])
+        XCTAssertEqual(children.count, 2)
     }
 
     func testHTTPHostStatusAndToolCall() throws {
@@ -412,7 +505,7 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 1,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.find_nodes",
+                    "name": "lookin.find",
                     "arguments": [
                         "ivar_name": "topBar",
                     ],
@@ -446,7 +539,7 @@ final class LookinMCPServerTests: XCTestCase {
                 "id": 2,
                 "method": "tools/call",
                 "params": [
-                    "name": "lookin.get_latest_snapshot",
+                    "name": "lookin.raw",
                     "arguments": [:],
                 ],
             ]
@@ -588,6 +681,15 @@ final class LookinMCPServerTests: XCTestCase {
         let result = try XCTUnwrap(response["result"] as? [String: Any])
         let content = try XCTUnwrap(result["content"] as? [[String: Any]])
         let text = try XCTUnwrap(content.first?["text"] as? String)
+        let data = Data(text.utf8)
+        let json = try JSONSerialization.jsonObject(with: data, options: [])
+        return try XCTUnwrap(json as? [String: Any])
+    }
+
+    private func parseResourcePayload(_ response: [String: Any]) throws -> [String: Any] {
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let contents = try XCTUnwrap(result["contents"] as? [[String: Any]])
+        let text = try XCTUnwrap(contents.first?["text"] as? String)
         let data = Data(text.utf8)
         let json = try JSONSerialization.jsonObject(with: data, options: [])
         return try XCTUnwrap(json as? [String: Any])

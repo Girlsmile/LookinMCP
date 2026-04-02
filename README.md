@@ -83,23 +83,50 @@ swift test
 - `过期`：服务在线，但 snapshot 缺失或已超过新鲜度阈值。
 - `错误`：进程退出、端口占用或状态检查失败。
 
-## 已支持的 Tools
+## 当前 MCP Surface
 
-- `lookin.list_snapshots`：列出 current 与 history 中可读取的快照。
-- `lookin.get_latest_snapshot`：返回最新 snapshot 的完整结构化内容。
-- `lookin.find_nodes`：按 `vc_name`、`ivar_name`、`class_name`、`text` 查找候选节点。
-- `lookin.get_node_details`：返回节点本体、父节点和直接子节点。
-- `lookin.get_node_relations`：返回父子兄弟关系、间距和对齐信息。
-- `lookin.get_subtree`：展开局部子树。
-- `lookin.crop_screenshot`：按节点裁剪局部截图。
-- `lookin.query_snapshot`：按 `vc_name`、`ivar_name`、`class_name`、`text` 对 snapshot 做确定性查询，并返回布局证据与层级摘录。
+### Tools
+
+- `lookin.screen`：返回当前或指定 snapshot 的紧凑页面摘要。
+- `lookin.find`：按 `vc_name`、`ivar_name`、`class_name`、`text` 定位候选节点。
+- `lookin.inspect`：读取单个节点的布局、样式和关系证据。
+- `lookin.capture`：按节点裁剪局部截图。
+- `lookin.raw`：返回原始快照导出的兜底入口，默认只给摘要和 raw resource 链接。
+
+### Resources
+
+- `lookin://snapshots/current/summary`
+- `lookin://snapshots/current/raw`
+- `lookin://snapshots/current/screenshot`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/subtree?...`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/capture?...`
+
+大对象默认不再通过 tools 直接内联，而是让 LLM 按需读取 resources。
+
+### Prompts
+
+- `analyze-node-layout`
+- `analyze-node-visual-style`
+- `diagnose-spacing-and-alignment`
+
+这些 prompts 用来约束 LLM 的取证顺序，不承载底层大数据。
+
+## 旧接口迁移
+
+- `lookin.list_snapshots` -> `lookin.screen` 或 `resources/list`
+- `lookin.get_latest_snapshot` -> `lookin.raw`
+- `lookin.find_nodes` / `lookin.query_snapshot` -> `lookin.find`
+- `lookin.get_node_details` / `lookin.get_node_relations` -> `lookin.inspect`
+- `lookin.get_subtree` -> `resources/read` 读取 subtree URI
+- `lookin.crop_screenshot` -> `lookin.capture`
 
 ## 查询返回的关键证据
 
 - `frame` / `bounds` / `frame_to_root`：节点自身尺寸、局部坐标和相对根视图坐标。
 - `layout_evidence`：包含 `intrinsic_size`、hugging / compression resistance，以及可直接读给 LLM 的约束摘要。
 - `visual_evidence`：包含 `hidden`、`opacity`、`user_interaction_enabled`、`masks_to_bounds`、`background_color`、`border_color`、`border_width`、`corner_radius`、`shadow`、`tint_color`、`tint_adjustment_mode`、`tag`。
-- `tree_excerpt`：命中节点周围的祖先和子树摘录，便于判断层级关系、包裹关系和间距来源。
+- `relations`：父子兄弟关系、parent inset、相对间距和对齐偏移。
+- `resource_links`：可进一步读取 raw snapshot、subtree 或裁图的资源入口。
 
 颜色会按结构化对象返回，例如：
 
@@ -115,7 +142,7 @@ swift test
 
 - 只读，不支持改属性、调方法或控制 Lookin GUI。
 - 当前仓库已经提供 app bundle 内嵌 helper 的发布脚本，但正式公开分发仍取决于签名、notarize 和发布产物管理。
-- `get_latest_snapshot` 直接返回完整 JSON，大页面下响应体会较大。
+- tools 默认使用 `compact` 返回，需要更大上下文时应显式读取 resources 或传入 `detail=full`。
 - 真实链路依赖你运行的是这份修改后的 Lookin.app，而不是旧版本二进制。
 
 ## 客户端连接示例
@@ -132,7 +159,7 @@ url = "http://127.0.0.1:3846/mcp"
 ## LLM Prompt 文档
 
 - 面向 CodexCLI / 其他 Agent 的直接使用说明见 `docs/LLM使用Prompt.md`
-- 该文档给出了推荐 tool 调用顺序、判断准则和可直接复制的 Prompt 模板
+- 该文档给出了推荐的 tool/resource/prompt 使用顺序、判断准则和可直接复制的 Prompt 模板
 
 ## 发布脚本
 

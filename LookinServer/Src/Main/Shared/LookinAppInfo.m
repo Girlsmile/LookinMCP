@@ -220,7 +220,8 @@ static NSString * const CodingKey_DeviceType = @"8";
         // https://github.com/hughkli/Lookin/issues/21
         return nil;
     }
-    UIGraphicsBeginImageContextWithOptions(size, YES, 0.4);
+    // 使用设备原生 scale 抓图，避免 MCP snapshot 导出的整图和局部裁图过小、发糊。
+    UIGraphicsBeginImageContextWithOptions(size, YES, 0);
     [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();

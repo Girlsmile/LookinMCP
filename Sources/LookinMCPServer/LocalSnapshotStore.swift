@@ -365,6 +365,7 @@ struct ScreenshotCropResponse: Encodable {
     let cropRectPixels: SnapshotRect
     let cropRectInScreenshot: SnapshotRect
     let screenshotPixelSize: SnapshotRect
+    let outputPixelSize: SnapshotRect
     let padding: Double
     let diagnosticNotes: [String]
 }
@@ -724,6 +725,11 @@ final class LocalSnapshotStore {
             throw MCPServerError.cropFailed("SCREENSHOT_CROP_FAILED: 无法按节点区域裁图。")
         }
 
+        let logicalUpscaleX = screenshot.width / max(pixelWidth, 1)
+        let logicalUpscaleY = screenshot.height / max(pixelHeight, 1)
+        let outputScale = min(max(max(logicalUpscaleX, logicalUpscaleY), 1), 4)
+        let finalImage = try upscaleImageIfNeeded(croppedImage, scale: outputScale)
+
         let cropsDirectory = record.directoryURL.appendingPathComponent("mcp-crops", isDirectory: true)
         try FileManager.default.createDirectory(at: cropsDirectory, withIntermediateDirectories: true)
         let sanitizedNodeId = node.nodeId.replacingOccurrences(of: ":", with: "_")
@@ -732,7 +738,7 @@ final class LocalSnapshotStore {
         guard let destination = CGImageDestinationCreateWithURL(cropURL as CFURL, UTType.png.identifier as CFString, 1, nil) else {
             throw MCPServerError.cropFailed("SCREENSHOT_WRITE_FAILED: 无法创建裁图输出。")
         }
-        CGImageDestinationAddImage(destination, croppedImage, nil)
+        CGImageDestinationAddImage(destination, finalImage, nil)
         guard CGImageDestinationFinalize(destination) else {
             throw MCPServerError.cropFailed("SCREENSHOT_WRITE_FAILED: 无法写出裁图 PNG。")
         }
@@ -740,6 +746,9 @@ final class LocalSnapshotStore {
         var notes: [String] = []
         if abs(pixelWidth - screenshot.width) > 0.001 || abs(pixelHeight - screenshot.height) > 0.001 {
             notes.append("截图像素尺寸与 snapshot 逻辑尺寸不一致，已按比例换算裁图。")
+        }
+        if outputScale > 1.01 {
+            notes.append("源 screenshot 分辨率偏低，裁图已按约 \(String(format: "%.2f", outputScale))x 自动放大。")
         }
 
         return ScreenshotCropResponse(
@@ -765,9 +774,35 @@ final class LocalSnapshotStore {
                 height: cropHeight / scaleY
             ),
             screenshotPixelSize: SnapshotRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight),
+            outputPixelSize: SnapshotRect(x: 0, y: 0, width: Double(finalImage.width), height: Double(finalImage.height)),
             padding: clampedPadding,
             diagnosticNotes: notes
         )
+    }
+
+    /// 当 screenshot 的实际像素明显低于逻辑尺寸时，放大裁图输出以改善可读性。
+    private func upscaleImageIfNeeded(_ image: CGImage, scale: Double) throws -> CGImage {
+        guard scale > 1.01 else {
+            return image
+        }
+
+        let outputWidth = max(1, Int((Double(image.width) * scale).rounded()))
+        let outputHeight = max(1, Int((Double(image.height) * scale).rounded()))
+        let outputSize = NSSize(width: outputWidth, height: outputHeight)
+        let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        let resizedImage = NSImage(size: outputSize)
+
+        resizedImage.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        nsImage.draw(in: NSRect(origin: .zero, size: outputSize))
+        resizedImage.unlockFocus()
+
+        guard let tiffData = resizedImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let cgImage = bitmap.cgImage else {
+            throw MCPServerError.cropFailed("SCREENSHOT_RESIZE_FAILED: 无法放大裁图输出。")
+        }
+        return cgImage
     }
 
     private func loadCurrentSnapshotIfExists() throws -> SnapshotRecord? {

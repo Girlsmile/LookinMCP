@@ -148,8 +148,6 @@
 		AAC16CDA2282B5F400E67E0A /* LKTipsView.m in Sources */ = {isa = PBXBuildFile; fileRef = AAC16CD92282B5F400E67E0A /* LKTipsView.m */; };
 		AAC1FB212282EDC6000A3653 /* LKWindowToolbarHelper.m in Sources */ = {isa = PBXBuildFile; fileRef = AAC1FB202282EDC6000A3653 /* LKWindowToolbarHelper.m */; };
 		AAC323172267ABD200BACA67 /* LKWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = AAC323162267ABD200BACA67 /* LKWindowController.m */; };
-		F1A0A1011A0A0011A0A00011 /* LKMCPHostManager.m in Sources */ = {isa = PBXBuildFile; fileRef = F1A0B1021A0A0011A0A00011 /* LKMCPHostManager.m */; };
-		F1A0A1021A0A0011A0A00011 /* LKMCPStatusPopoverController.m in Sources */ = {isa = PBXBuildFile; fileRef = F1A0B1041A0A0011A0A00011 /* LKMCPStatusPopoverController.m */; };
 		AAC41E1722686A28005CDD6E /* LKStaticHierarchyDataSource.m in Sources */ = {isa = PBXBuildFile; fileRef = AAC41E1522686A28005CDD6E /* LKStaticHierarchyDataSource.m */; };
 		AAC5E2DE228034DC0081A810 /* LKHierarchyDataSource.m in Sources */ = {isa = PBXBuildFile; fileRef = AAC5E2DD228034DC0081A810 /* LKHierarchyDataSource.m */; };
 		AACBACAF22AE983F00A8F89D /* LKDashboardAttributeRectView.m in Sources */ = {isa = PBXBuildFile; fileRef = AACBACAE22AE983F00A8F89D /* LKDashboardAttributeRectView.m */; };
@@ -183,6 +181,8 @@
 		D4224EEF2358ED3400ED9626 /* LKMeasureController.m in Sources */ = {isa = PBXBuildFile; fileRef = D4224EEE2358ED3400ED9626 /* LKMeasureController.m */; };
 		D4D1B2D32353975A002A5071 /* LKWindowToolbarScaleView.m in Sources */ = {isa = PBXBuildFile; fileRef = D4D1B2D22353975A002A5071 /* LKWindowToolbarScaleView.m */; };
 		D4E1FD66236169130070DFB8 /* LKMeasureResultLineData.m in Sources */ = {isa = PBXBuildFile; fileRef = D4E1FD65236169130070DFB8 /* LKMeasureResultLineData.m */; };
+		F1A0A1011A0A0011A0A00011 /* LKMCPHostManager.m in Sources */ = {isa = PBXBuildFile; fileRef = F1A0B1021A0A0011A0A00011 /* LKMCPHostManager.m */; };
+		F1A0A1021A0A0011A0A00011 /* LKMCPStatusPopoverController.m in Sources */ = {isa = PBXBuildFile; fileRef = F1A0B1041A0A0011A0A00011 /* LKMCPStatusPopoverController.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -352,7 +352,7 @@
 		AA3A7D0823003F5800997887 /* LKHierarchyHandlersPopoverItemView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKHierarchyHandlersPopoverItemView.m; sourceTree = "<group>"; };
 		AA3D51A82289E57C00E4E6B7 /* LKExportManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LKExportManager.h; sourceTree = "<group>"; };
 		AA3D51A92289E57C00E4E6B7 /* LKExportManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKExportManager.m; sourceTree = "<group>"; };
-		AA48F29B21CC0CA50032EC2C /* Lookin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lookin.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA48F29B21CC0CA50032EC2C /* Lookin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = Lookin.app; path = /Users/guzhipeng/Desktop/LookinMCP/LookinMCP/Lookin/build/Debug/Lookin.app; sourceTree = "<absolute>"; };
 		AA48F2A121CC0CA60032EC2C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA48F2A421CC0CA60032EC2C /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		AA48F2A621CC0CA60032EC2C /* LookinClient_Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = LookinClient_Info.plist; sourceTree = "<group>"; };
@@ -502,10 +502,6 @@
 		AAC16CD92282B5F400E67E0A /* LKTipsView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKTipsView.m; sourceTree = "<group>"; };
 		AAC1FB1F2282EDC6000A3653 /* LKWindowToolbarHelper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKWindowToolbarHelper.h; sourceTree = "<group>"; };
 		AAC1FB202282EDC6000A3653 /* LKWindowToolbarHelper.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKWindowToolbarHelper.m; sourceTree = "<group>"; };
-		F1A0B1011A0A0011A0A00011 /* LKMCPHostManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKMCPHostManager.h; sourceTree = "<group>"; };
-		F1A0B1021A0A0011A0A00011 /* LKMCPHostManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKMCPHostManager.m; sourceTree = "<group>"; };
-		F1A0B1031A0A0011A0A00011 /* LKMCPStatusPopoverController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKMCPStatusPopoverController.h; sourceTree = "<group>"; };
-		F1A0B1041A0A0011A0A00011 /* LKMCPStatusPopoverController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKMCPStatusPopoverController.m; sourceTree = "<group>"; };
 		AAC323152267ABD200BACA67 /* LKWindowController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKWindowController.h; sourceTree = "<group>"; };
 		AAC323162267ABD200BACA67 /* LKWindowController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKWindowController.m; sourceTree = "<group>"; };
 		AAC41E1522686A28005CDD6E /* LKStaticHierarchyDataSource.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKStaticHierarchyDataSource.m; sourceTree = "<group>"; };
@@ -573,6 +569,10 @@
 		D4E1FD64236169130070DFB8 /* LKMeasureResultLineData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKMeasureResultLineData.h; sourceTree = "<group>"; };
 		D4E1FD65236169130070DFB8 /* LKMeasureResultLineData.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKMeasureResultLineData.m; sourceTree = "<group>"; };
 		D97552B9BF9170E090F8CAA7 /* Pods-LookinClient.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LookinClient.debug.xcconfig"; path = "Target Support Files/Pods-LookinClient/Pods-LookinClient.debug.xcconfig"; sourceTree = "<group>"; };
+		F1A0B1011A0A0011A0A00011 /* LKMCPHostManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKMCPHostManager.h; sourceTree = "<group>"; };
+		F1A0B1021A0A0011A0A00011 /* LKMCPHostManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKMCPHostManager.m; sourceTree = "<group>"; };
+		F1A0B1031A0A0011A0A00011 /* LKMCPStatusPopoverController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LKMCPStatusPopoverController.h; sourceTree = "<group>"; };
+		F1A0B1041A0A0011A0A00011 /* LKMCPStatusPopoverController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKMCPStatusPopoverController.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -842,7 +842,6 @@
 		AA48F29C21CC0CA50032EC2C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA48F29B21CC0CA50032EC2C /* Lookin.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
