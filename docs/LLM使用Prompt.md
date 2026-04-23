@@ -4,11 +4,12 @@
 
 ## 推荐调用顺序
 
-1. 先用 `lookin.screen` 或 `lookin.find` 确认当前页面和目标节点。
-2. 对目标节点调用 `lookin.inspect`，默认先拿 compact 证据。
-3. 如果需要更多层级上下文，读取 inspect 返回的 subtree resource。
-4. 如果需要视觉证据，再调用 `lookin.capture` 或读取 capture resource。
-5. 如果要分析完整页面，再读取 raw resource，而不是默认请求整份 snapshot。
+1. 优先用 `lookin.find` 并传入 `mode=ids` 定位候选节点，只拿 `sid/total/ids`。
+2. 对最相关节点调用 `lookin.inspect` 并传入 `mode=brief`，只拿短字段节点摘要。
+3. 如果需要布局证据，读取 `lookin://snapshots/{sid}/nodes/{id}/layout`。
+4. 如果需要视觉证据，读取 `lookin://snapshots/{sid}/nodes/{id}/style` 或调用 `lookin.capture`。
+5. 如果需要关系或层级，读取 `relations`、`children`、`siblings` 或带 `limit/cursor` 的 `subtree` resource。
+6. 如果要分析完整页面，再读取 raw resource，而不是默认请求整份 snapshot。
 
 ## 建议给 LLM 的任务约束
 
@@ -16,6 +17,21 @@
 - 必须引用具体字段，例如 `frame`、`constraints_summary`、`background_color`、`corner_radius`、`siblings`、`spacing`。
 - 先判断“事实是什么”，再判断“是否合理”，最后给出修改建议。
 - 如果证据不足，应明确说明还需要哪个 tool、resource 或 prompt 的结果。
+
+## 低 token 字段
+
+低 token 模式会使用短字段：
+
+- `sid`: snapshot id
+- `id`: node id
+- `cls`: class name
+- `raw`: raw class name
+- `vc`: host view controller
+- `f`: `[x, y, width, height]`
+- `ch`: child count
+- `p`: parent id
+- `n`: nodes
+- `next`: 下一页 cursor
 
 ## 可直接复制的 Prompt
 
@@ -27,9 +43,9 @@
 - 你需要判断这个节点及其周边 UI 是否存在布局、间距、颜色、层级或约束问题
 
 工作流程：
-1. 先调用 `lookin.find` 定位候选节点
-2. 对最相关节点调用 `lookin.inspect`
-3. 如果需要更多层级上下文，读取 inspect 返回的 subtree resource
+1. 先调用 `lookin.find`，传入 `mode=ids` 定位候选节点
+2. 对最相关节点调用 `lookin.inspect`，传入 `mode=brief`
+3. 如果需要布局、样式或关系证据，按需读取 `{layout|style|relations|children|siblings|subtree}` resource
 4. 必要时调用 `lookin.capture`
 
 输出要求：

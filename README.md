@@ -88,8 +88,8 @@ swift test
 ### Tools
 
 - `lookin.screen`：返回当前或指定 snapshot 的紧凑页面摘要。
-- `lookin.find`：按 `vc_name`、`ivar_name`、`class_name`、`text` 定位候选节点。
-- `lookin.inspect`：读取单个节点的布局、样式和关系证据。
+- `lookin.find`：按 `vc_name`、`ivar_name`、`class_name`、`text` 定位候选节点；传 `mode=ids` 时只返回 `sid/total/ids`。
+- `lookin.inspect`：读取单个节点的布局、样式和关系证据；传 `mode=brief` 时只返回短字段节点摘要，传 `mode=evidence` 时只返回显式请求的证据 section。
 - `lookin.capture`：按节点裁剪局部截图。
 - `lookin.raw`：返回原始快照导出的兜底入口，默认只给摘要和 raw resource 链接。
 
@@ -98,10 +98,60 @@ swift test
 - `lookin://snapshots/current/summary`
 - `lookin://snapshots/current/raw`
 - `lookin://snapshots/current/screenshot`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/layout`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/style`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/relations`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/children?limit=...&cursor=...`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/siblings?limit=...&cursor=...`
 - `lookin://snapshots/<snapshot_id>/nodes/<node_id>/subtree?...`
 - `lookin://snapshots/<snapshot_id>/nodes/<node_id>/capture?...`
 
 大对象默认不再通过 tools 直接内联，而是让 LLM 按需读取 resources。
+
+## 推荐的低 Token 查询路径
+
+如果你的目标是让 LLM 少吃上下文，推荐这样调用：
+
+1. `lookin.find` + `mode=ids`
+2. `lookin.inspect` + `mode=brief`
+3. 按需读取 `layout`、`style`、`relations`、`children`、`siblings`、`subtree` 或 `capture`
+
+例如：
+
+```json
+{
+  "name": "lookin.find",
+  "arguments": {
+    "class_name": "Collage_dev.ERCanvasImageView",
+    "mode": "ids"
+  }
+}
+```
+
+然后：
+
+```json
+{
+  "name": "lookin.inspect",
+  "arguments": {
+    "node_id": "oid:47",
+    "mode": "brief"
+  }
+}
+```
+
+### 低 token 短字段
+
+- `sid`：snapshot id
+- `id`：node id
+- `cls`：class name
+- `raw`：raw class name
+- `vc`：host view controller
+- `f`：`[x, y, width, height]`
+- `ch`：child count
+- `p`：parent id
+- `n`：nodes
+- `next`：下一页 cursor
 
 ### Prompts
 
@@ -126,7 +176,7 @@ swift test
 - `layout_evidence`：包含 `intrinsic_size`、hugging / compression resistance，以及可直接读给 LLM 的约束摘要。
 - `visual_evidence`：包含 `hidden`、`opacity`、`user_interaction_enabled`、`masks_to_bounds`、`background_color`、`border_color`、`border_width`、`corner_radius`、`shadow`、`tint_color`、`tint_adjustment_mode`、`tag`。
 - `relations`：父子兄弟关系、parent inset、相对间距和对齐偏移。
-- `resource_links`：可进一步读取 raw snapshot、subtree 或裁图的资源入口。
+- `resource_links`：现有可读模式下用于进一步读取 raw snapshot、subtree 或裁图的资源入口。低 token mode 默认不重复返回它。
 
 颜色会按结构化对象返回，例如：
 
@@ -142,7 +192,7 @@ swift test
 
 - 只读，不支持改属性、调方法或控制 Lookin GUI。
 - 当前仓库已经提供 app bundle 内嵌 helper 的发布脚本，但正式公开分发仍取决于签名、notarize 和发布产物管理。
-- tools 默认使用 `compact` 返回，需要更大上下文时应显式读取 resources 或传入 `detail=full`。
+- tools 默认仍支持 `compact` 返回；如果想节约 token，优先使用 `mode=ids` / `mode=brief`，再按需读取 section resources。
 - 真实链路依赖你运行的是这份修改后的 Lookin.app，而不是旧版本二进制。
 
 ## 客户端连接示例

@@ -85,7 +85,7 @@ final class MCPRequestHandler {
                     ),
                     toolDescriptor(
                         name: "lookin.find",
-                        description: "已知 ivar、VC、class 或文案时优先用这个工具。它会定位候选节点，并返回适合继续 inspect 的紧凑命中结果。",
+                        description: "已知 ivar、VC、class 或文案时优先用这个工具。默认保持可读 compact 响应；低 token 路径传 mode=ids，仅返回 sid/total/ids，再用 lookin.inspect mode=brief 展开。",
                         properties: [
                             "snapshot_id": stringSchema(description: "可选，指定 snapshot_id。默认读取当前快照。"),
                             "vc_name": stringSchema(description: "可选，按 host view controller 名称精确匹配。"),
@@ -93,16 +93,18 @@ final class MCPRequestHandler {
                             "class_name": stringSchema(description: "可选，按类名或 class chain 匹配。"),
                             "text": stringSchema(description: "可选，按文本模糊匹配。"),
                             "max_matches": numberSchema(description: "可选，结果上限，默认 10。"),
+                            "mode": enumSchema(values: ["ids"], description: "可选，低 token 查询模式。ids 只返回 sid、total 和 ids，不返回证据字段或 resource_links。"),
                             "detail": enumSchema(values: ["compact", "standard", "full"], description: "控制返回信息密度，默认 compact。"),
                             "include": includeSchema(),
                         ]
                     ),
                     toolDescriptor(
                         name: "lookin.inspect",
-                        description: "围绕单个节点取证时用这个工具。它统一返回布局、样式、父子兄弟关系和子节点摘要，避免再分别调用 details/relations/subtree。",
+                        description: "围绕单个节点取证时用这个工具。默认保持可读 compact 响应；低 token 路径传 mode=brief 获取 sid/node，或 mode=evidence 搭配 include 精确返回 layout/style/relations/children。",
                         properties: [
                             "snapshot_id": stringSchema(description: "可选，指定 snapshot_id。默认读取当前快照。"),
                             "node_id": stringSchema(description: "必填，要分析的节点。"),
+                            "mode": enumSchema(values: ["brief", "evidence"], description: "可选，低 token 查询模式。brief 只返回短字段节点摘要；evidence 只返回 include 指定 section。"),
                             "detail": enumSchema(values: ["compact", "standard", "full"], description: "控制返回信息密度，默认 compact。"),
                             "include": includeSchema(),
                         ],
@@ -219,9 +221,20 @@ final class MCPRequestHandler {
             case "lookin.screen":
                 payloadText = try screenPayload(arguments: arguments).prettyJSONString()
             case "lookin.find":
-                payloadText = try findPayload(arguments: arguments).prettyJSONString()
+                if SurfaceMode.parse(arguments["mode"]?.stringValue) == .ids {
+                    payloadText = try findIDsPayload(arguments: arguments).prettyJSONString()
+                } else {
+                    payloadText = try findPayload(arguments: arguments).prettyJSONString()
+                }
             case "lookin.inspect":
-                payloadText = try inspectPayload(arguments: arguments).prettyJSONString()
+                switch SurfaceMode.parse(arguments["mode"]?.stringValue) {
+                case .brief:
+                    payloadText = try inspectBriefPayload(arguments: arguments).prettyJSONString()
+                case .evidence:
+                    payloadText = try inspectEvidencePayload(arguments: arguments).prettyJSONString()
+                default:
+                    payloadText = try inspectPayload(arguments: arguments).prettyJSONString()
+                }
             case "lookin.capture":
                 payloadText = try capturePayload(arguments: arguments).prettyJSONString()
             case "lookin.raw":
@@ -279,16 +292,68 @@ final class MCPRequestHandler {
                 ).prettyJSONString()
             case "screenshot":
                 payloadText = try screenshotResourcePayload(snapshotId: request.snapshotId).prettyJSONString()
+            case "layout":
+                guard let nodeId = request.nodeId else {
+                    throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: layout resource 缺少 node_id。")
+                }
+                payloadText = try store.nodeLayout(snapshotId: request.snapshotId, nodeId: nodeId).prettyJSONString()
+            case "style":
+                guard let nodeId = request.nodeId else {
+                    throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: style resource 缺少 node_id。")
+                }
+                payloadText = try store.nodeStyle(snapshotId: request.snapshotId, nodeId: nodeId).prettyJSONString()
+            case "relations":
+                guard let nodeId = request.nodeId else {
+                    throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: relations resource 缺少 node_id。")
+                }
+                payloadText = try LowTokenEvidenceResponse(
+                    sid: try store.snapshot(snapshotId: request.snapshotId).document.snapshotId,
+                    id: nodeId,
+                    layout: nil,
+                    style: nil,
+                    relations: try store.lowTokenRelations(snapshotId: request.snapshotId, nodeId: nodeId),
+                    children: nil
+                ).prettyJSONString()
+            case "children":
+                guard let nodeId = request.nodeId else {
+                    throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: children resource 缺少 node_id。")
+                }
+                payloadText = try store.nodeChildrenPage(
+                    snapshotId: request.snapshotId,
+                    nodeId: nodeId,
+                    limit: request.limit,
+                    cursor: request.cursor
+                ).prettyJSONString()
+            case "siblings":
+                guard let nodeId = request.nodeId else {
+                    throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: siblings resource 缺少 node_id。")
+                }
+                payloadText = try store.nodeSiblingsPage(
+                    snapshotId: request.snapshotId,
+                    nodeId: nodeId,
+                    limit: request.limit,
+                    cursor: request.cursor
+                ).prettyJSONString()
             case "subtree":
                 guard let nodeId = request.nodeId else {
                     throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: subtree resource 缺少 node_id。")
                 }
-                payloadText = try store.subtree(
-                    snapshotId: request.snapshotId,
-                    nodeId: nodeId,
-                    maxDepth: request.maxDepth,
-                    maxNodes: request.maxNodes
-                ).prettyJSONString()
+                if request.paginated {
+                    payloadText = try store.lowTokenSubtreePage(
+                        snapshotId: request.snapshotId,
+                        nodeId: nodeId,
+                        maxDepth: request.maxDepth,
+                        limit: request.limit,
+                        cursor: request.cursor
+                    ).prettyJSONString()
+                } else {
+                    payloadText = try store.subtree(
+                        snapshotId: request.snapshotId,
+                        nodeId: nodeId,
+                        maxDepth: request.maxDepth,
+                        maxNodes: request.maxNodes
+                    ).prettyJSONString()
+                }
             case "capture":
                 guard let nodeId = request.nodeId else {
                     throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: capture resource 缺少 node_id。")
@@ -491,6 +556,24 @@ final class MCPRequestHandler {
         )
     }
 
+    private func findIDsPayload(arguments: [String: JSONValue]) throws -> LowTokenFindResponse {
+        let query = SnapshotQuery(
+            snapshotId: arguments["snapshot_id"]?.stringValue,
+            vcName: arguments["vc_name"]?.stringValue,
+            ivarName: arguments["ivar_name"]?.stringValue,
+            className: arguments["class_name"]?.stringValue,
+            text: arguments["text"]?.stringValue,
+            maxMatches: max(1, min(arguments["max_matches"]?.intValue ?? 10, 50)),
+            includeTree: false
+        )
+        let response = try store.findNodes(query)
+        return LowTokenFindResponse(
+            sid: response.snapshotId,
+            total: response.matchCount,
+            ids: response.nodes.map(\.nodeId)
+        )
+    }
+
     /// inspect 汇总节点核心证据，避免让客户端同时调用 details + relations + subtree。
     private func inspectPayload(arguments: [String: JSONValue]) throws -> SurfaceInspectResponse {
         guard let nodeID = arguments["node_id"]?.stringValue,
@@ -537,6 +620,31 @@ final class MCPRequestHandler {
                 snapshotResourceLinks(for: record)[1],
             ],
             diagnosticNotes: detail == .compact ? ["默认不内联完整子树，请按需读取 subtree resource。"] : []
+        )
+    }
+
+    private func inspectBriefPayload(arguments: [String: JSONValue]) throws -> LowTokenInspectBriefResponse {
+        let details = try requiredNodeDetails(arguments: arguments)
+        return LowTokenInspectBriefResponse(
+            sid: details.snapshotId,
+            node: lowTokenNodeSummary(from: details.node)
+        )
+    }
+
+    private func inspectEvidencePayload(arguments: [String: JSONValue]) throws -> LowTokenEvidenceResponse {
+        let details = try requiredNodeDetails(arguments: arguments)
+        let include = parseIncludes(arguments["include"])
+        let includeAll = include.isEmpty
+        let snapshotID = arguments["snapshot_id"]?.stringValue
+        let nodeID = details.node.nodeId
+
+        return LowTokenEvidenceResponse(
+            sid: details.snapshotId,
+            id: nodeID,
+            layout: includeAll || include.contains(.layout) ? details.node.layoutEvidence : nil,
+            style: includeAll || include.contains(.style) ? details.node.visualEvidence : nil,
+            relations: includeAll || include.contains(.relations) ? try store.lowTokenRelations(snapshotId: snapshotID, nodeId: nodeID) : nil,
+            children: includeAll || include.contains(.children) ? try store.nodeChildrenPage(snapshotId: snapshotID, nodeId: nodeID, limit: 80, cursor: nil) : nil
         )
     }
 
@@ -645,6 +753,27 @@ final class MCPRequestHandler {
         )
     }
 
+    private func lowTokenNodeSummary(from node: SnapshotNode) -> LowTokenNodeSummary {
+        LowTokenNodeSummary(
+            id: node.nodeId,
+            cls: node.className,
+            raw: node.rawClassName,
+            title: node.title,
+            vc: node.hostViewControllerName,
+            f: LowTokenFormat.frameArray(node.frameToRoot ?? node.frame),
+            ch: node.childIds.count,
+            p: node.parentId
+        )
+    }
+
+    private func requiredNodeDetails(arguments: [String: JSONValue]) throws -> NodeDetailsResponse {
+        guard let nodeID = arguments["node_id"]?.stringValue,
+              !nodeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MCPServerError.invalidArguments("INVALID_ARGUMENTS: `node_id` 不能为空。")
+        }
+        return try store.nodeDetails(snapshotId: arguments["snapshot_id"]?.stringValue, nodeId: nodeID)
+    }
+
     private func parseIncludes(_ value: JSONValue?) -> [SurfaceInclude] {
         guard case .array(let items)? = value else {
             return []
@@ -750,9 +879,12 @@ final class MCPRequestHandler {
             关注点: \(focus)
 
             请按以下步骤执行：
-            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`detail=standard`、`include=[\"layout\",\"relations\",\"children\"]`
-            2. 读取 inspect 返回的 subtree resource 与 capture resource
-            3. 结合 frame、constraints、parent insets、siblings gap 判断布局是否异常
+            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`mode=brief`
+            2. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/layout`
+            3. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/relations`
+            4. 如果需要更多局部层级，读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/children?limit=20` 或 `subtree?depth=1&limit=40`
+            5. 必要时读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/capture?padding=8`
+            6. 结合 frame、constraints、parent insets、siblings gap 判断布局是否异常
             4. 输出结论时明确列出证据、可能原因和建议修复方向
             """
         case "analyze-node-visual-style":
@@ -763,9 +895,10 @@ final class MCPRequestHandler {
             关注点: \(focus)
 
             请按以下步骤执行：
-            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`detail=standard`、`include=[\"style\"]`
-            2. 调用 `lookin.capture` 获取局部裁图
-            3. 对照 visual evidence 与截图，检查颜色、圆角、边框、阴影、透明度是否一致
+            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`mode=brief`
+            2. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/style`
+            3. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/capture?padding=8`
+            4. 对照 style 证据与裁图，检查颜色、圆角、边框、阴影、透明度是否一致
             4. 输出时区分“证据确认的问题”和“需要人工复核的猜测”
             """
         case "diagnose-spacing-and-alignment":
@@ -776,9 +909,12 @@ final class MCPRequestHandler {
             关注点: \(focus)
 
             请按以下步骤执行：
-            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`detail=full`、`include=[\"relations\",\"children\"]`
-            2. 读取 inspect 返回的 subtree resource，必要时调用 `lookin.find` 查找同一 VC 中的相关节点
-            3. 基于 siblings gap、center delta、parent inset 与 subtree 层级判断是否存在对齐或间距异常
+            1. 调用 `lookin.inspect`，传入 `node_id=\(nodeID)`、`mode=brief`
+            2. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/relations`
+            3. 读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/children?limit=20`
+            4. 如果证据还不够，再读取 `lookin://snapshots/\(snapshotID)/nodes/\(nodeID)/subtree?depth=1&limit=40`
+            5. 必要时调用 `lookin.find` 的 `mode=ids` 在同一 VC 中查找相关节点
+            6. 基于 siblings gap、center delta、parent inset 与 subtree 层级判断是否存在对齐或间距异常
             4. 输出时给出异常位置、证据值和优先级排序
             """
         default:

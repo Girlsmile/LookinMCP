@@ -15,6 +15,21 @@ enum SurfaceDetail: String {
     }
 }
 
+/// 控制工具返回形态；低 token 模式通过多次短查询替代一次大响应。
+enum SurfaceMode: String {
+    case ids
+    case brief
+    case evidence
+
+    static func parse(_ value: String?) -> SurfaceMode? {
+        guard let value,
+              let parsed = SurfaceMode(rawValue: value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) else {
+            return nil
+        }
+        return parsed
+    }
+}
+
 enum SurfaceInclude: String, CaseIterable {
     case layout
     case style
@@ -132,6 +147,87 @@ struct SurfaceRawResponse: Encodable {
     let snapshot: SnapshotDocument?
 }
 
+struct LowTokenFindResponse: Encodable {
+    let sid: String
+    let total: Int
+    let ids: [String]
+}
+
+struct LowTokenNodeSummary: Encodable {
+    let id: String
+    let cls: String
+    let raw: String
+    let title: String
+    let vc: String
+    let f: [Double]?
+    let ch: Int
+    let p: String?
+}
+
+struct LowTokenInspectBriefResponse: Encodable {
+    let sid: String
+    let node: LowTokenNodeSummary
+}
+
+struct LowTokenEvidenceResponse: Encodable {
+    let sid: String
+    let id: String
+    let layout: SnapshotLayoutEvidence?
+    let style: SnapshotVisualEvidence?
+    let relations: LowTokenRelationsSection?
+    let children: LowTokenNodePage?
+}
+
+struct LowTokenRelationsSection: Encodable {
+    let parent: LowTokenRelatedNode?
+    let ancestors: [LowTokenNodeSummary]
+    let siblings: [LowTokenRelatedNode]
+    let withinParentInsets: ParentInsets?
+}
+
+struct LowTokenRelatedNode: Encodable {
+    let node: LowTokenNodeSummary
+    let rel: RelativeLayoutMetrics
+}
+
+struct LowTokenNodePage: Encodable {
+    let sid: String
+    let id: String
+    let n: [LowTokenNodeSummary]
+    let next: String?
+}
+
+struct LowTokenLayoutSection: Encodable {
+    let sid: String
+    let id: String
+    let layout: SnapshotLayoutEvidence?
+}
+
+struct LowTokenStyleSection: Encodable {
+    let sid: String
+    let id: String
+    let style: SnapshotVisualEvidence?
+}
+
+enum LowTokenFormat {
+    /// 将矩形压缩为 `[x, y, width, height]`，并保留两位小数以减少 token 噪音。
+    static func frameArray(_ rect: SnapshotRect?) -> [Double]? {
+        guard let rect else {
+            return nil
+        }
+        return [
+            rounded(rect.x),
+            rounded(rect.y),
+            rounded(rect.width),
+            rounded(rect.height),
+        ]
+    }
+
+    static func rounded(_ value: Double) -> Double {
+        (value * 100).rounded() / 100
+    }
+}
+
 struct MCPPromptArgument: Encodable {
     let name: String
     let description: String
@@ -213,6 +309,10 @@ enum LookinResourceURI {
         "lookin://snapshots/\(snapshotId)/nodes/\(nodeId)/subtree?max_depth=\(maxDepth)&max_nodes=\(maxNodes)"
     }
 
+    static func section(snapshotId: String, nodeId: String, section: String) -> String {
+        "lookin://snapshots/\(snapshotId)/nodes/\(nodeId)/\(section)"
+    }
+
     static func capture(snapshotId: String, nodeId: String, padding: Double = 0) -> String {
         "lookin://snapshots/\(snapshotId)/nodes/\(nodeId)/capture?padding=\(Int(padding))"
     }
@@ -224,6 +324,9 @@ struct ParsedResourceRequest {
     let nodeId: String?
     let maxDepth: Int
     let maxNodes: Int
+    let limit: Int
+    let cursor: String?
+    let paginated: Bool
     let padding: Double
 }
 
@@ -245,6 +348,10 @@ enum ResourceURIParser {
 
         let snapshotId = pathSegments[0] == "current" ? nil : pathSegments[0]
         let params = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        let maxDepth = max(0, min(Int(params["depth"] ?? params["max_depth"] ?? "") ?? 2, 8))
+        let limit = max(1, min(Int(params["limit"] ?? params["max_nodes"] ?? "") ?? 80, 500))
+        let maxNodes = limit
+        let paginated = params["limit"] != nil || params["cursor"] != nil || params["depth"] != nil
 
         if pathSegments.count == 2 {
             let kind = pathSegments[1]
@@ -253,8 +360,11 @@ enum ResourceURIParser {
                 snapshotId: snapshotId,
                 kind: kind,
                 nodeId: nil,
-                maxDepth: max(0, min(Int(params["max_depth"] ?? "") ?? 2, 8)),
-                maxNodes: max(1, min(Int(params["max_nodes"] ?? "") ?? 80, 500)),
+                maxDepth: maxDepth,
+                maxNodes: maxNodes,
+                limit: limit,
+                cursor: params["cursor"],
+                paginated: paginated,
                 padding: min(max(Double(params["padding"] ?? "") ?? 0, 0), 200)
             )
         }
@@ -266,7 +376,7 @@ enum ResourceURIParser {
 
         let nodeId = pathSegments[2]
         let kind = pathSegments[3]
-        guard ["subtree", "capture"].contains(kind) else {
+        guard ["layout", "style", "relations", "children", "siblings", "subtree", "capture"].contains(kind) else {
             return nil
         }
 
@@ -274,8 +384,11 @@ enum ResourceURIParser {
             snapshotId: snapshotId,
             kind: kind,
             nodeId: nodeId,
-            maxDepth: max(0, min(Int(params["max_depth"] ?? "") ?? 2, 8)),
-            maxNodes: max(1, min(Int(params["max_nodes"] ?? "") ?? 80, 500)),
+            maxDepth: maxDepth,
+            maxNodes: maxNodes,
+            limit: limit,
+            cursor: params["cursor"],
+            paginated: paginated,
             padding: min(max(Double(params["padding"] ?? "") ?? 0, 0), 200)
         )
     }

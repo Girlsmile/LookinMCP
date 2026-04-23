@@ -424,6 +424,8 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertTrue(text.contains("lookin.inspect"))
         XCTAssertTrue(text.contains("oid:topBar"))
         XCTAssertTrue(text.contains("左右间距"))
+        XCTAssertTrue(text.contains("mode=brief"))
+        XCTAssertTrue(text.contains("/layout"))
     }
 
     func testInspectCompactAndFullDetailBehaviors() throws {
@@ -476,6 +478,247 @@ final class LookinMCPServerTests: XCTestCase {
         XCTAssertNotNil(fullPayload["visual_evidence"] as? [String: Any])
         let children = try XCTUnwrap(fullPayload["children"] as? [[String: Any]])
         XCTAssertEqual(children.count, 2)
+    }
+
+    func testFindIDsModeReturnsOnlyIdentifiers() throws {
+        let root = try makeSnapshotRoot()
+        try writeSnapshot(
+            at: root.appendingPathComponent("current/snapshot.json"),
+            snapshotID: "20260401T125100Z",
+            capturedAt: "2026-04-01T12:51:00Z",
+            appName: "Demo",
+            bundleID: "com.demo.app",
+            nodes: makeRelationFixtureNodes()
+        )
+
+        let response = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.find",
+                    "arguments": [
+                        "ivar_name": "topBar",
+                        "mode": "ids",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+
+        let payload = try parseToolPayload(response)
+        XCTAssertEqual(payload["sid"] as? String, "20260401T125100Z")
+        XCTAssertEqual(payload["total"] as? Int, 1)
+        XCTAssertEqual(payload["ids"] as? [String], ["oid:2"])
+        XCTAssertNil(payload["nodes"])
+        XCTAssertNil(payload["resource_links"])
+        XCTAssertNil(payload["layout_evidence"])
+        XCTAssertNil(payload["style"])
+    }
+
+    func testInspectBriefModeReturnsShortStableFields() throws {
+        let root = try makeSnapshotRoot()
+        try writeSnapshot(
+            at: root.appendingPathComponent("current/snapshot.json"),
+            snapshotID: "20260401T125200Z",
+            capturedAt: "2026-04-01T12:52:00Z",
+            appName: "Demo",
+            bundleID: "com.demo.app",
+            nodes: makeRelationFixtureNodes()
+        )
+
+        let response = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.inspect",
+                    "arguments": [
+                        "node_id": "oid:2",
+                        "mode": "brief",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+
+        let payload = try parseToolPayload(response)
+        XCTAssertEqual(payload["sid"] as? String, "20260401T125200Z")
+        let node = try XCTUnwrap(payload["node"] as? [String: Any])
+        XCTAssertEqual(node["id"] as? String, "oid:2")
+        XCTAssertEqual(node["cls"] as? String, "UIView")
+        XCTAssertEqual(node["raw"] as? String, "UIView")
+        XCTAssertEqual(node["vc"] as? String, "HomeViewController")
+        XCTAssertEqual(node["ch"] as? Int, 2)
+        let frame = try XCTUnwrap(node["f"] as? [Double])
+        XCTAssertEqual(frame, [10, 20, 180, 40])
+        XCTAssertNil(payload["resource_links"])
+        XCTAssertNil(payload["layout_evidence"])
+    }
+
+    func testSectionResourcesReturnFocusedEvidenceAndPaginatedChildren() throws {
+        let root = try makeSnapshotRoot()
+        try writeSnapshot(
+            at: root.appendingPathComponent("current/snapshot.json"),
+            snapshotID: "20260401T125300Z",
+            capturedAt: "2026-04-01T12:53:00Z",
+            appName: "Demo",
+            bundleID: "com.demo.app",
+            nodes: makeRelationFixtureNodes()
+        )
+
+        let layout = try parseResourcePayload(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "resources/read",
+                "params": [
+                    "uri": "lookin://snapshots/current/nodes/oid:2/layout",
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        XCTAssertEqual(layout["sid"] as? String, "20260401T125300Z")
+        XCTAssertEqual(layout["id"] as? String, "oid:2")
+        XCTAssertNotNil(layout["layout"] as? [String: Any])
+        XCTAssertNil(layout["style"])
+
+        let style = try parseResourcePayload(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "resources/read",
+                "params": [
+                    "uri": "lookin://snapshots/current/nodes/oid:2/style",
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        XCTAssertNotNil(style["style"] as? [String: Any])
+        XCTAssertNil(style["layout"])
+
+        let relations = try parseResourcePayload(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "resources/read",
+                "params": [
+                    "uri": "lookin://snapshots/current/nodes/oid:3/relations",
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let relationSection = try XCTUnwrap(relations["relations"] as? [String: Any])
+        XCTAssertNotNil(relationSection["parent"] as? [String: Any])
+        XCTAssertNotNil(relationSection["siblings"] as? [[String: Any]])
+
+        let firstChildrenPage = try parseResourcePayload(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "resources/read",
+                "params": [
+                    "uri": "lookin://snapshots/current/nodes/oid:2/children?limit=1",
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let firstNodes = try XCTUnwrap(firstChildrenPage["n"] as? [[String: Any]])
+        XCTAssertEqual(firstNodes.count, 1)
+        XCTAssertEqual(firstNodes.first?["id"] as? String, "oid:3")
+        XCTAssertEqual(firstChildrenPage["next"] as? String, "1")
+
+        let secondChildrenPage = try parseResourcePayload(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "resources/read",
+                "params": [
+                    "uri": "lookin://snapshots/current/nodes/oid:2/children?limit=1&cursor=1",
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let secondNodes = try XCTUnwrap(secondChildrenPage["n"] as? [[String: Any]])
+        XCTAssertEqual(secondNodes.first?["id"] as? String, "oid:4")
+        XCTAssertNil(secondChildrenPage["next"])
+    }
+
+    func testLowTokenQueryPathIsSmallerThanCompactPath() throws {
+        let root = try makeSnapshotRoot()
+        try writeSnapshot(
+            at: root.appendingPathComponent("current/snapshot.json"),
+            snapshotID: "20260401T125400Z",
+            capturedAt: "2026-04-01T12:54:00Z",
+            appName: "Demo",
+            bundleID: "com.demo.app",
+            nodes: makeRelationFixtureNodes()
+        )
+
+        let compactFind = try parseToolText(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.find",
+                    "arguments": [
+                        "ivar_name": "topBar",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let compactInspect = try parseToolText(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.inspect",
+                    "arguments": [
+                        "node_id": "oid:2",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let lowTokenFind = try parseToolText(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.find",
+                    "arguments": [
+                        "ivar_name": "topBar",
+                        "mode": "ids",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        ))
+        let lowTokenInspect = try parseToolText(invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.inspect",
+                    "arguments": [
+                        "node_id": "oid:2",
+                        "mode": "brief",
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        ))
+
+        let compactBytes = compactFind.utf8.count + compactInspect.utf8.count
+        let lowTokenBytes = lowTokenFind.utf8.count + lowTokenInspect.utf8.count
+        XCTAssertLessThan(lowTokenBytes, compactBytes / 2)
     }
 
     func testHTTPHostStatusAndToolCall() throws {
@@ -678,12 +921,16 @@ final class LookinMCPServerTests: XCTestCase {
     }
 
     private func parseToolPayload(_ response: [String: Any]) throws -> [String: Any] {
-        let result = try XCTUnwrap(response["result"] as? [String: Any])
-        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
-        let text = try XCTUnwrap(content.first?["text"] as? String)
+        let text = try parseToolText(response)
         let data = Data(text.utf8)
         let json = try JSONSerialization.jsonObject(with: data, options: [])
         return try XCTUnwrap(json as? [String: Any])
+    }
+
+    private func parseToolText(_ response: [String: Any]) throws -> String {
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        return try XCTUnwrap(content.first?["text"] as? String)
     }
 
     private func parseResourcePayload(_ response: [String: Any]) throws -> [String: Any] {

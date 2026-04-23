@@ -87,8 +87,8 @@ To debug MCP manually:
 ### Tools
 
 - `lookin.screen`: return a compact page-level snapshot summary
-- `lookin.find`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`
-- `lookin.inspect`: inspect one node with layout, style, and relation evidence
+- `lookin.find`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`; with `mode=ids`, it returns only `sid/total/ids`
+- `lookin.inspect`: inspect one node with layout, style, and relation evidence; with `mode=brief`, it returns only a short node summary, and with `mode=evidence`, it returns only explicitly requested evidence sections
 - `lookin.capture`: crop a local screenshot around a node
 - `lookin.raw`: fallback raw snapshot export, compact by default with a resource link
 
@@ -97,10 +97,60 @@ To debug MCP manually:
 - `lookin://snapshots/current/summary`
 - `lookin://snapshots/current/raw`
 - `lookin://snapshots/current/screenshot`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/layout`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/style`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/relations`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/children?limit=...&cursor=...`
+- `lookin://snapshots/<snapshot_id>/nodes/<node_id>/siblings?limit=...&cursor=...`
 - `lookin://snapshots/<snapshot_id>/nodes/<node_id>/subtree?...`
 - `lookin://snapshots/<snapshot_id>/nodes/<node_id>/capture?...`
 
 Heavy objects are no longer inlined by default through tools. The model should read resources on demand.
+
+## Recommended Low-Token Query Path
+
+If the goal is to minimize LLM context cost, use this flow:
+
+1. `lookin.find` + `mode=ids`
+2. `lookin.inspect` + `mode=brief`
+3. Read `layout`, `style`, `relations`, `children`, `siblings`, `subtree`, or `capture` only when needed
+
+Example:
+
+```json
+{
+  "name": "lookin.find",
+  "arguments": {
+    "class_name": "Collage_dev.ERCanvasImageView",
+    "mode": "ids"
+  }
+}
+```
+
+Then:
+
+```json
+{
+  "name": "lookin.inspect",
+  "arguments": {
+    "node_id": "oid:47",
+    "mode": "brief"
+  }
+}
+```
+
+### Short Fields
+
+- `sid`: snapshot id
+- `id`: node id
+- `cls`: class name
+- `raw`: raw class name
+- `vc`: host view controller
+- `f`: `[x, y, width, height]`
+- `ch`: child count
+- `p`: parent id
+- `n`: nodes
+- `next`: pagination cursor
 
 ### Prompts
 
@@ -125,7 +175,7 @@ Prompts describe the workflow. They do not inline the heavy snapshot payloads.
 - `layout_evidence`: intrinsic size, hugging/compression priorities, and readable constraint summaries
 - `visual_evidence`: hidden state, opacity, interaction, masks, colors, borders, corner radius, shadow, tint, and tags
 - `relations`: parent/child/sibling metrics, insets, and alignment deltas
-- `resource_links`: follow-up entry points for raw snapshot, subtree, and cropped captures
+- `resource_links`: follow-up entry points for readable/debug responses. Low-token modes do not repeat them by default.
 
 Color values are returned in structured form, for example:
 
@@ -141,7 +191,7 @@ Color values are returned in structured form, for example:
 
 - Read-only only; no attribute mutation, method invocation, or Lookin GUI control
 - The repository now includes app-bundled helper packaging scripts, but public distribution still depends on signing, notarization, and release management
-- tools default to `compact`; use `detail=full` or read resources explicitly when more context is needed
+- tools still support readable `compact` output; if you want lower token cost, prefer `mode=ids` / `mode=brief`, then read section resources explicitly
 - The real workflow depends on running this modified Lookin build, not the original upstream binary
 
 ## Client Example

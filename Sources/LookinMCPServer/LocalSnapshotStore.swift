@@ -352,6 +352,13 @@ struct SubtreeResponse: Encodable {
     let diagnosticNotes: [String]
 }
 
+struct PaginatedSubtreeResponse: Encodable {
+    let sid: String
+    let id: String
+    let n: [LowTokenNodeSummary]
+    let next: String?
+}
+
 struct ScreenshotCropResponse: Encodable {
     let snapshotId: String
     let capturedAt: String
@@ -598,6 +605,28 @@ final class LocalSnapshotStore {
         )
     }
 
+    func nodeLayout(snapshotId: String?, nodeId: String) throws -> LowTokenLayoutSection {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+        return LowTokenLayoutSection(
+            sid: record.document.snapshotId,
+            id: node.nodeId,
+            layout: node.layoutEvidence
+        )
+    }
+
+    func nodeStyle(snapshotId: String?, nodeId: String) throws -> LowTokenStyleSection {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+        return LowTokenStyleSection(
+            sid: record.document.snapshotId,
+            id: node.nodeId,
+            style: node.visualEvidence
+        )
+    }
+
     func nodeRelations(snapshotId: String?, nodeId: String) throws -> NodeRelationsResponse {
         let record = try snapshot(snapshotId: snapshotId)
         let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
@@ -629,6 +658,28 @@ final class LocalSnapshotStore {
             children: children,
             withinParentInsets: parentNode.flatMap { parentInsets(of: node, in: $0) },
             diagnosticNotes: []
+        )
+    }
+
+    func lowTokenRelations(snapshotId: String?, nodeId: String) throws -> LowTokenRelationsSection {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+
+        let parentNode = node.parentId.flatMap { index.byID[$0] }
+        let parentRelated = parentNode.map {
+            LowTokenRelatedNode(node: lowTokenNodeSummary($0), rel: relativeMetrics(from: node, to: $0))
+        }
+        let ancestors = index.ancestors(of: node.nodeId).map(lowTokenNodeSummary)
+        let siblings = index.siblings(of: node.nodeId).map {
+            LowTokenRelatedNode(node: lowTokenNodeSummary($0), rel: relativeMetrics(from: node, to: $0))
+        }
+
+        return LowTokenRelationsSection(
+            parent: parentRelated,
+            ancestors: ancestors,
+            siblings: siblings,
+            withinParentInsets: parentNode.flatMap { parentInsets(of: node, in: $0) }
         )
     }
 
@@ -673,6 +724,31 @@ final class LocalSnapshotStore {
             },
             diagnosticNotes: truncated ? ["命中子树节点超过上限，结果已截断。"] : []
         )
+    }
+
+    func nodeChildrenPage(snapshotId: String?, nodeId: String, limit: Int, cursor: String?) throws -> LowTokenNodePage {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+        let children = node.childIds.compactMap { index.byID[$0] }
+        return page(nodes: children, snapshotId: record.document.snapshotId, nodeId: node.nodeId, limit: limit, cursor: cursor)
+    }
+
+    func nodeSiblingsPage(snapshotId: String?, nodeId: String, limit: Int, cursor: String?) throws -> LowTokenNodePage {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+        let siblings = index.siblings(of: node.nodeId)
+        return page(nodes: siblings, snapshotId: record.document.snapshotId, nodeId: node.nodeId, limit: limit, cursor: cursor)
+    }
+
+    func lowTokenSubtreePage(snapshotId: String?, nodeId: String, maxDepth: Int, limit: Int, cursor: String?) throws -> LowTokenNodePage {
+        let record = try snapshot(snapshotId: snapshotId)
+        let index = SnapshotTreeIndex(nodes: record.document.tree.nodes)
+        let node = try requireNode(nodeId: nodeId, in: index)
+        let clampedDepth = max(0, min(maxDepth, 8))
+        let descendants = index.descendants(of: node.nodeId, maxDepth: clampedDepth, maxNodes: Int.max).map(\.node)
+        return page(nodes: descendants, snapshotId: record.document.snapshotId, nodeId: node.nodeId, limit: limit, cursor: cursor)
     }
 
     func cropScreenshot(snapshotId: String?, nodeId: String, padding: Double) throws -> ScreenshotCropResponse {
@@ -959,6 +1035,43 @@ final class LocalSnapshotStore {
             isHidden: node.isHidden,
             alpha: node.alpha
         )
+    }
+
+    private func lowTokenNodeSummary(_ node: SnapshotNode) -> LowTokenNodeSummary {
+        LowTokenNodeSummary(
+            id: node.nodeId,
+            cls: node.className,
+            raw: node.rawClassName,
+            title: node.title,
+            vc: node.hostViewControllerName,
+            f: LowTokenFormat.frameArray(node.frameToRoot ?? node.frame),
+            ch: node.childIds.count,
+            p: node.parentId
+        )
+    }
+
+    private func page(nodes: [SnapshotNode], snapshotId: String, nodeId: String, limit: Int, cursor: String?) -> LowTokenNodePage {
+        let clampedLimit = max(1, min(limit, 500))
+        let offset = parseCursor(cursor)
+        let safeOffset = min(max(offset, 0), nodes.count)
+        let pageNodes = Array(nodes.dropFirst(safeOffset).prefix(clampedLimit))
+        let nextOffset = safeOffset + pageNodes.count
+        let next = nextOffset < nodes.count ? String(nextOffset) : nil
+        return LowTokenNodePage(
+            sid: snapshotId,
+            id: nodeId,
+            n: pageNodes.map(lowTokenNodeSummary),
+            next: next
+        )
+    }
+
+    /// Cursor 采用稳定数字偏移，避免把本地路径或内存地址暴露给 MCP 客户端。
+    private func parseCursor(_ cursor: String?) -> Int {
+        guard let cursor,
+              let value = Int(cursor.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return 0
+        }
+        return max(value, 0)
     }
 
     private func parentInsets(of node: SnapshotNode, in parent: SnapshotNode) -> ParentInsets? {
