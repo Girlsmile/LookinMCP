@@ -10,7 +10,7 @@
 		</data>
 		<key>Resources/Assets.car</key>
 		<data>
-		JU8cR3sUaU4+3Uw9oHdWKYfcTeg=
+		FaenPNQoDLk/uExno6qsULVrxWA=
 		</data>
 		<key>Resources/Base.lproj/MainMenu.nib</key>
 		<data>
@@ -89,10 +89,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			g8x3d/Jww+zerhxO74o6SJDkz60=
+			H7QNmzjz76NccWhfdTb7Afoo2fU=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"83cc7777f270c3ecdeae1c4eef8a3a4890e4cfad"</string>
+			<string>cdhash H"1fb40d9b38f3efa35c71685f7536fb01fa28d9f5"</string>
 		</dict>
 		<key>Resources/AppIcon.icns</key>
 		<dict>
@@ -105,7 +105,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			Iq3ZTxypyilRYiz1eDikgFfX8GSigVPyr4LWs9Erasg=
+			3xcVk4GoFfFUu7ExHor70j5MXfVtYDOb08xp7iPEY6g=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/MainMenu.nib</key>
