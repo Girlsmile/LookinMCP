@@ -26,6 +26,8 @@
 #import "LookinIvarTrace.h"
 #import "LookinObject+LookinClient.h"
 #import "NSColor+LookinClient.h"
+#import <CoreFoundation/CoreFoundation.h>
+#import <math.h>
 
 static NSString * const LKMCPSnapshotSchemaVersion = @"lookin-mcp-snapshot-v1";
 static NSString * const LKMCPSnapshotExporterVersion = @"0.1.0";
@@ -114,7 +116,8 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
         return NO;
     }
 
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:snapshot
+    id sanitizedSnapshot = [self _sanitizedJSONObject:snapshot];
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:sanitizedSnapshot
                                                        options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
                                                          error:error];
     if (!jsonData) {
@@ -275,8 +278,8 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
     if (screenshotImage) {
         snapshot[@"screenshot"] = @{
             @"relative_path": LKMCPSnapshotScreenshotFileName,
-            @"width": @(screenshotImage.size.width),
-            @"height": @(screenshotImage.size.height)
+            @"width": [self _jsonSafeNumberFromDouble:screenshotImage.size.width defaultValue:0],
+            @"height": [self _jsonSafeNumberFromDouble:screenshotImage.size.height defaultValue:0]
         };
     }
 
@@ -302,7 +305,7 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
     node[@"host_view_controller_name"] = [self _resolvedHostViewControllerNameForItem:item] ?: @"";
     node[@"ivar_names"] = [self _ivarNamesForItem:item];
     node[@"is_hidden"] = @(item.isHidden);
-    node[@"alpha"] = @(item.alpha);
+    node[@"alpha"] = [self _jsonSafeNumberFromDouble:item.alpha defaultValue:1];
     node[@"displaying_in_hierarchy"] = @(item.displayingInHierarchy);
     node[@"in_hidden_hierarchy"] = @(item.inHiddenHierarchy);
     node[@"indent_level"] = @(item.indentLevel);
@@ -315,10 +318,19 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
     }
 
     if ([item hasValidFrameToRoot]) {
-        node[@"frame_to_root"] = [self _dictionaryFromRect:[item calculateFrameToRoot]];
+        NSDictionary<NSString *, id> *frameToRoot = [self _dictionaryFromRect:[item calculateFrameToRoot]];
+        if (frameToRoot) {
+            node[@"frame_to_root"] = frameToRoot;
+        }
     }
-    node[@"frame"] = [self _dictionaryFromRect:item.frame];
-    node[@"bounds"] = [self _dictionaryFromRect:item.bounds];
+    NSDictionary<NSString *, id> *frame = [self _dictionaryFromRect:item.frame];
+    if (frame) {
+        node[@"frame"] = frame;
+    }
+    NSDictionary<NSString *, id> *bounds = [self _dictionaryFromRect:item.bounds];
+    if (bounds) {
+        node[@"bounds"] = bounds;
+    }
 
     NSArray<LookinAttributesGroup *> *attrGroups = [item queryAllAttrGroupList] ?: @[];
     NSArray<NSString *> *textValues = [self _textValuesFromAttrGroups:attrGroups];
@@ -354,9 +366,9 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
     app[@"lookin_server_version"] = appInfo.serverReadableVersion.length > 0 ? appInfo.serverReadableVersion : @(appInfo.serverVersion);
     app[@"app_info_identifier"] = @(appInfo.appInfoIdentifier);
     app[@"screen"] = @{
-        @"width": @(appInfo.screenWidth),
-        @"height": @(appInfo.screenHeight),
-        @"scale": @(appInfo.screenScale)
+        @"width": [self _jsonSafeNumberFromDouble:appInfo.screenWidth defaultValue:0],
+        @"height": [self _jsonSafeNumberFromDouble:appInfo.screenHeight defaultValue:0],
+        @"scale": [self _jsonSafeNumberFromDouble:appInfo.screenScale defaultValue:1]
     };
     return app.copy;
 }
@@ -409,7 +421,7 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
                                                attrGroups:(NSArray<LookinAttributesGroup *> *)attrGroups {
     NSMutableDictionary<NSString *, id> *evidence = [NSMutableDictionary dictionary];
     evidence[@"hidden"] = @(item.isHidden);
-    evidence[@"opacity"] = @(item.alpha);
+    evidence[@"opacity"] = [self _jsonSafeNumberFromDouble:item.alpha defaultValue:1];
 
     for (LookinAttributesGroup *group in attrGroups) {
         for (LookinAttributesSection *section in group.attrSections ?: @[]) {
@@ -598,7 +610,7 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
 /// 从数值型 attribute 中提取 NSNumber。
 - (NSNumber *)_numberValueFromAttribute:(LookinAttribute *)attribute {
     if ([attribute.value isKindOfClass:[NSNumber class]]) {
-        return attribute.value;
+        return [self _jsonSafeNumberFromNumber:attribute.value defaultValue:0];
     }
     return nil;
 }
@@ -621,7 +633,7 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
     return @{
         @"rgba_string": color.rgbaString ?: @"",
         @"hex_string": color.hexString ?: @"",
-        @"components": color.lk_rgbaComponents ?: @[]
+        @"components": [self _sanitizedJSONArray:color.lk_rgbaComponents ?: @[]]
     };
 }
 
@@ -685,12 +697,65 @@ static NSUInteger const LKMCPSnapshotHistoryLimit = 20;
 
 /// 将 rect 转成 JSON 友好的字典。
 - (NSDictionary<NSString *, id> *)_dictionaryFromRect:(CGRect)rect {
+    if (![LKHelper validateFrame:rect]) {
+        return nil;
+    }
     return @{
-        @"x": @(rect.origin.x),
-        @"y": @(rect.origin.y),
-        @"width": @(rect.size.width),
-        @"height": @(rect.size.height)
+        @"x": [self _jsonSafeNumberFromDouble:rect.origin.x defaultValue:0],
+        @"y": [self _jsonSafeNumberFromDouble:rect.origin.y defaultValue:0],
+        @"width": [self _jsonSafeNumberFromDouble:rect.size.width defaultValue:0],
+        @"height": [self _jsonSafeNumberFromDouble:rect.size.height defaultValue:0]
     };
+}
+
+/// 把非 JSON 安全的数值（NaN/Inf）收敛成有限值，避免 snapshot 导出直接崩溃。
+- (NSNumber *)_jsonSafeNumberFromDouble:(double)value defaultValue:(double)defaultValue {
+    return @(isfinite(value) ? value : defaultValue);
+}
+
+/// 保留布尔值语义，其余 NSNumber 遇到 NaN/Inf 时回落到默认值。
+- (NSNumber *)_jsonSafeNumberFromNumber:(NSNumber *)number defaultValue:(double)defaultValue {
+    if (!number) {
+        return nil;
+    }
+    CFTypeID typeID = CFGetTypeID((__bridge CFTypeRef)number);
+    if (typeID == CFBooleanGetTypeID()) {
+        return number;
+    }
+    if (CFNumberIsFloatType((CFNumberRef)number)) {
+        return [self _jsonSafeNumberFromDouble:number.doubleValue defaultValue:defaultValue];
+    }
+    return number;
+}
+
+/// 递归清洗数组，确保颜色分量等列表里不会残留 NaN。
+- (NSArray *)_sanitizedJSONArray:(NSArray *)array {
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:array.count];
+    for (id value in array) {
+        [result addObject:[self _sanitizedJSONObject:value] ?: [NSNull null]];
+    }
+    return result.copy;
+}
+
+/// 在最终写 JSON 前做一层兜底清洗，避免漏网的 NSNumber 触发 NSJSONSerialization 异常。
+- (id)_sanitizedJSONObject:(id)value {
+    if (!value || value == [NSNull null]) {
+        return [NSNull null];
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithCapacity:[(NSDictionary *)value count]];
+        [(NSDictionary *)value enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            result[key] = [self _sanitizedJSONObject:obj] ?: [NSNull null];
+        }];
+        return result.copy;
+    }
+    if ([value isKindOfClass:[NSArray class]]) {
+        return [self _sanitizedJSONArray:value];
+    }
+    if ([value isKindOfClass:[NSNumber class]]) {
+        return [self _jsonSafeNumberFromNumber:value defaultValue:0];
+    }
+    return value;
 }
 
 /// 统一获取对象的简化类名。
