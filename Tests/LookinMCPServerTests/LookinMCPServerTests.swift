@@ -56,12 +56,95 @@ final class LookinMCPServerTests: XCTestCase {
         let toolNames = Set(tools.compactMap { $0["name"] as? String })
 
         XCTAssertEqual(toolNames, [
+            "lookin.refresh",
             "lookin.screen",
             "lookin.find",
             "lookin.inspect",
             "lookin.capture",
             "lookin.raw",
         ])
+    }
+
+    func testRefreshReturnsIDsOnlyByDefault() throws {
+        let root = makeTemporaryDirectory()
+        respondToNextRefreshRequest(
+            snapshotRoot: root,
+            responseFields: [
+                "ok": true,
+                "sid": "20260511T120000Z",
+                "prev_sid": "20260511T115900Z",
+                "phase": "details",
+                "changed": true,
+                "ms": 1234,
+                "captured_at": "2026-05-11T12:00:00Z",
+                "app": "Demo",
+            ]
+        )
+
+        let response = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.refresh",
+                    "arguments": [
+                        "timeout_ms": 2000,
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+        let payload = try parseToolPayload(response)
+        XCTAssertEqual(payload["ok"] as? Bool, true)
+        XCTAssertEqual(payload["sid"] as? String, "20260511T120000Z")
+        XCTAssertEqual(payload["prev_sid"] as? String, "20260511T115900Z")
+        XCTAssertEqual(payload["phase"] as? String, "details")
+        XCTAssertEqual(payload["changed"] as? Bool, true)
+        XCTAssertEqual(payload["ms"] as? Int, 1234)
+        XCTAssertNil(payload["captured_at"])
+        XCTAssertNil(payload["app"])
+    }
+
+    func testRefreshBriefReturnsShortMetadataOnly() throws {
+        let root = makeTemporaryDirectory()
+        respondToNextRefreshRequest(
+            snapshotRoot: root,
+            responseFields: [
+                "ok": true,
+                "sid": "20260511T120000Z",
+                "prev_sid": NSNull(),
+                "phase": "hierarchy",
+                "changed": true,
+                "ms": 320,
+                "captured_at": "2026-05-11T12:00:00Z",
+                "app": "Demo",
+            ]
+        )
+
+        let response = try invokeServer(
+            with: [
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": [
+                    "name": "lookin.refresh",
+                    "arguments": [
+                        "mode": "brief",
+                        "wait_until": "hierarchy",
+                        "timeout_ms": 2000,
+                    ],
+                ],
+            ],
+            snapshotRoot: root
+        )
+        let payload = try parseToolPayload(response)
+        XCTAssertEqual(payload["sid"] as? String, "20260511T120000Z")
+        XCTAssertEqual(payload["phase"] as? String, "hierarchy")
+        XCTAssertEqual(payload["captured_at"] as? String, "2026-05-11T12:00:00Z")
+        XCTAssertEqual(payload["app"] as? String, "Demo")
+        XCTAssertNil(payload["nodes"])
+        XCTAssertNil(payload["resource_links"])
     }
 
     func testRawReturnsNoSnapshotErrorWhenEmpty() throws {
@@ -918,6 +1001,45 @@ final class LookinMCPServerTests: XCTestCase {
         let body = output.subdata(in: range.upperBound..<output.endIndex)
         let json = try JSONSerialization.jsonObject(with: body, options: [])
         return try XCTUnwrap(json as? [String: Any])
+    }
+
+    private func respondToNextRefreshRequest(snapshotRoot: URL, responseFields: [String: Any]) {
+        let requestsURL = snapshotRoot
+            .appendingPathComponent("control", isDirectory: true)
+            .appendingPathComponent("requests", isDirectory: true)
+        let responsesURL = snapshotRoot
+            .appendingPathComponent("control", isDirectory: true)
+            .appendingPathComponent("responses", isDirectory: true)
+        let responseFieldsData = try? JSONSerialization.data(withJSONObject: responseFields, options: [])
+
+        DispatchQueue.global().async {
+            guard let responseFieldsData,
+                  let decodedResponseFields = try? JSONSerialization.jsonObject(with: responseFieldsData) as? [String: Any] else {
+                return
+            }
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                let fileNames = (try? FileManager.default.contentsOfDirectory(atPath: requestsURL.path)) ?? []
+                if let fileName = fileNames.first(where: { $0.hasSuffix(".json") }) {
+                    let requestURL = requestsURL.appendingPathComponent(fileName)
+                    guard let data = try? Data(contentsOf: requestURL),
+                          let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let requestID = request["request_id"] as? String else {
+                        return
+                    }
+                    try? FileManager.default.createDirectory(at: responsesURL, withIntermediateDirectories: true)
+                    var response = decodedResponseFields
+                    response["request_id"] = requestID
+                    if response["error"] == nil {
+                        response["error"] = NSNull()
+                    }
+                    let responseData = try? JSONSerialization.data(withJSONObject: response, options: [.prettyPrinted, .sortedKeys])
+                    try? responseData?.write(to: responsesURL.appendingPathComponent("\(requestID).json"), options: [.atomic])
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+        }
     }
 
     private func parseToolPayload(_ response: [String: Any]) throws -> [String: Any] {

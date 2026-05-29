@@ -4,12 +4,13 @@
 
 ## 推荐调用顺序
 
-1. 优先用 `lookin.find` 并传入 `mode=ids` 定位候选节点，只拿 `sid/total/ids`。
-2. 对最相关节点调用 `lookin.inspect` 并传入 `mode=brief`，只拿短字段节点摘要。
-3. 如果需要布局证据，读取 `lookin://snapshots/{sid}/nodes/{id}/layout`。
-4. 如果需要视觉证据，读取 `lookin://snapshots/{sid}/nodes/{id}/style` 或调用 `lookin.capture`。
-5. 如果需要关系或层级，读取 `relations`、`children`、`siblings` 或带 `limit/cursor` 的 `subtree` resource。
-6. 如果要分析完整页面，再读取 raw resource，而不是默认请求整份 snapshot。
+1. 页面刚切换或 snapshot 可能过期时，先调用 `lookin.refresh` 并传入 `mode=ids`，只拿 `sid/phase/changed/ms`。
+2. 优先用 `lookin.find` 并传入 `mode=ids` 定位候选节点，只拿 `sid/total/ids`。
+3. 对最相关节点调用 `lookin.inspect` 并传入 `mode=brief`，只拿短字段节点摘要。
+4. 如果需要布局证据，读取 `lookin://snapshots/{sid}/nodes/{id}/layout`。
+5. 如果需要视觉证据，读取 `lookin://snapshots/{sid}/nodes/{id}/style` 或调用 `lookin.capture`。
+6. 如果需要关系或层级，读取 `relations`、`children`、`siblings` 或带 `limit/cursor` 的 `subtree` resource。
+7. 如果要分析完整页面，再读取 raw resource，而不是默认请求整份 snapshot。
 
 ## 建议给 LLM 的任务约束
 
@@ -43,10 +44,11 @@
 - 你需要判断这个节点及其周边 UI 是否存在布局、间距、颜色、层级或约束问题
 
 工作流程：
-1. 先调用 `lookin.find`，传入 `mode=ids` 定位候选节点
-2. 对最相关节点调用 `lookin.inspect`，传入 `mode=brief`
-3. 如果需要布局、样式或关系证据，按需读取 `{layout|style|relations|children|siblings|subtree}` resource
-4. 必要时调用 `lookin.capture`
+1. 如果页面刚切换，先调用 `lookin.refresh`，传入 `mode=ids`
+2. 调用 `lookin.find`，传入 `mode=ids` 定位候选节点
+3. 对最相关节点调用 `lookin.inspect`，传入 `mode=brief`
+4. 如果需要布局、样式或关系证据，按需读取 `{layout|style|relations|children|siblings|subtree}` resource
+5. 必要时调用 `lookin.capture`
 
 输出要求：
 - 先列出你确认到的事实证据

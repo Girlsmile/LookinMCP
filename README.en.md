@@ -87,6 +87,7 @@ To debug MCP manually:
 ### Tools
 
 - `lookin.screen`: return a compact page-level snapshot summary
+- `lookin.refresh`: ask Lookin Desktop to refresh the current page; by default `mode=ids` returns only `sid/prev_sid/phase/changed/ms`
 - `lookin.find`: find candidate nodes by `vc_name`, `ivar_name`, `class_name`, or `text`; with `mode=ids`, it returns only `sid/total/ids`
 - `lookin.inspect`: inspect one node with layout, style, and relation evidence; with `mode=brief`, it returns only a short node summary, and with `mode=evidence`, it returns only explicitly requested evidence sections
 - `lookin.capture`: crop a local screenshot around a node
@@ -111,11 +112,24 @@ Heavy objects are no longer inlined by default through tools. The model should r
 
 If the goal is to minimize LLM context cost, use this flow:
 
-1. `lookin.find` + `mode=ids`
-2. `lookin.inspect` + `mode=brief`
-3. Read `layout`, `style`, `relations`, `children`, `siblings`, `subtree`, or `capture` only when needed
+1. If the page just changed or the snapshot may be stale, call `lookin.refresh` + `mode=ids` first and keep only the new `sid` and `phase`.
+2. If you already know the target, call `lookin.find` + `mode=ids` with that `sid`.
+3. Call `lookin.inspect` + `mode=brief` for the most relevant node.
+4. Read `layout`, `style`, `relations`, `children`, `siblings`, `subtree`, or `capture` only when needed.
 
 Example:
+
+```json
+{
+  "name": "lookin.refresh",
+  "arguments": {
+    "mode": "ids",
+    "wait_until": "details"
+  }
+}
+```
+
+Then:
 
 ```json
 {

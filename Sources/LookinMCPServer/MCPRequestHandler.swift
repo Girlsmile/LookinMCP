@@ -2,9 +2,11 @@ import Foundation
 
 final class MCPRequestHandler {
     private let store: LocalSnapshotStore
+    private let refreshController: RefreshControlling?
 
-    init(store: LocalSnapshotStore = LocalSnapshotStore()) {
+    init(store: LocalSnapshotStore = LocalSnapshotStore(), refreshController: RefreshControlling? = nil) {
         self.store = store
+        self.refreshController = refreshController
     }
 
     func handle(message: JSONRPCMessage) throws -> JSONRPCMessage? {
@@ -75,6 +77,15 @@ final class MCPRequestHandler {
             params: nil,
             result: .object([
                 "tools": .array([
+                    toolDescriptor(
+                        name: "lookin.refresh",
+                        description: "agent 打开新页面后先用这个动作工具。它请求 Lookin Desktop 刷新当前页面并等待指定完成阶段；默认 ids-only，只返回 sid/phase/changed/ms，不返回页面摘要或节点数据。",
+                        properties: [
+                            "wait_until": enumSchema(values: ["hierarchy", "details"], description: "可选，等待到哪个刷新阶段。默认 details；hierarchy 更快但截图/detail 可能未完整。"),
+                            "timeout_ms": numberSchema(description: "可选，等待超时时间，默认 20000，范围 500...120000。"),
+                            "mode": enumSchema(values: ["ids", "brief"], description: "可选，默认 ids，仅返回最小状态字段；brief 额外返回 captured_at 和 app。"),
+                        ]
+                    ),
                     toolDescriptor(
                         name: "lookin.screen",
                         description: "先看页面全局时用这个工具。返回当前或指定 snapshot 的紧凑摘要、可见 VC、根节点概览，以及 raw/screenshot 等按需展开入口。",
@@ -218,6 +229,8 @@ final class MCPRequestHandler {
         let payloadText: String
         do {
             switch toolName {
+            case "lookin.refresh":
+                payloadText = try refreshPayload(arguments: arguments).prettyJSONString()
             case "lookin.screen":
                 payloadText = try screenPayload(arguments: arguments).prettyJSONString()
             case "lookin.find":
@@ -240,7 +253,7 @@ final class MCPRequestHandler {
             case "lookin.raw":
                 payloadText = try rawPayload(arguments: arguments).prettyJSONString()
             default:
-                throw MCPServerError.invalidArguments("UNKNOWN_TOOL: 未知工具 `\(toolName)`。请迁移到 `lookin.screen/find/inspect/capture/raw`。")
+                throw MCPServerError.invalidArguments("UNKNOWN_TOOL: 未知工具 `\(toolName)`。请迁移到 `lookin.refresh/screen/find/inspect/capture/raw`。")
             }
 
             return textToolResponse(id: message.id, text: payloadText)
@@ -477,6 +490,16 @@ final class MCPRequestHandler {
             ]),
             error: nil
         )
+    }
+
+    /// 返回页面级紧凑摘要，作为所有分析流程的起点。
+    private func refreshPayload(arguments: [String: JSONValue]) throws -> RefreshToolResponse {
+        let waitUntil = RefreshWaitPhase.parse(arguments["wait_until"]?.stringValue)
+        let mode = RefreshMode.parse(arguments["mode"]?.stringValue)
+        let timeoutMs = arguments["timeout_ms"]?.intValue ?? 20_000
+        let response = try (refreshController ?? RefreshControlClient(snapshotRootPath: store.snapshotRootPath()))
+            .refresh(waitUntil: waitUntil, timeoutMs: timeoutMs)
+        return RefreshToolResponse(control: response, mode: mode)
     }
 
     /// 返回页面级紧凑摘要，作为所有分析流程的起点。

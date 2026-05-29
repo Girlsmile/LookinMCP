@@ -45,6 +45,16 @@
 /// 当拉取 hierarchy 和更新截图时，该属性为 YES
 @property(nonatomic, assign) BOOL isFetchingHierarchy;
 @property(nonatomic, assign) BOOL isFetchingDetails;
+@property(nonatomic, copy, nullable) void (^pendingMCPRefreshCompletion)(BOOL success,
+                                                                        NSString *_Nullable phase,
+                                                                        NSString *_Nullable snapshotID,
+                                                                        NSString *_Nullable capturedAt,
+                                                                        NSString *_Nullable appName,
+                                                                        NSError *_Nullable error);
+@property(nonatomic, copy, nullable) NSString *pendingMCPRefreshRequestID;
+@property(nonatomic, assign) LKMCPRefreshWaitUntil pendingMCPRefreshWaitUntil;
+@property(nonatomic, assign) BOOL pendingMCPRefreshDidStartDetails;
+@property(nonatomic, strong, nullable) dispatch_source_t pendingMCPRefreshTimeoutSource;
 
 @end
 
@@ -228,6 +238,7 @@
 - (void)_handleInspectingAppDidEnd:(id)obj {
     self.isFetchingHierarchy = NO;
     self.isFetchingDetails = NO;
+    [self _finishPendingMCPRefreshSuccess:NO phase:nil snapshotID:nil capturedAt:nil appName:nil error:LookinErrorMake(NSLocalizedString(@"Refresh failed", nil), NSLocalizedString(@"当前 app 连接已结束，刷新无法继续。", nil))];
 }
 
 - (void)_handleMCPStatusDidChange {
@@ -293,6 +304,7 @@
         [[LKStaticHierarchyDataSource sharedInstance] reloadWithHierarchyInfo:info keepState:YES];
         [self _exportSnapshotIfPossible];
         self.isFetchingHierarchy = NO;
+        [self _handlePendingMCPRefreshAfterHierarchy];
         
         [LKPerformanceReporter.sharedInstance didFetchHierarchy];
         
@@ -301,6 +313,7 @@
         @strongify(self);
         [self.viewController.progressView resetToZero];
         self.isFetchingHierarchy = NO;
+        [self _finishPendingMCPRefreshSuccess:NO phase:nil snapshotID:nil capturedAt:nil appName:nil error:error];
         
         [[NSAlert alertWithError:error] beginSheetModalForWindow:self.window completionHandler:nil];
     }];
@@ -584,6 +597,7 @@
             image.template = YES;
             reloadButton.image = image;
             [self _exportSnapshotIfPossible];
+            [self _handlePendingMCPRefreshAfterDetails];
         } else {
             // 继续维持“非 fetch”状态
         }
@@ -592,6 +606,102 @@
 
 - (void)detailUpdateReceivedError:(NSError *)error {
     AlertError(error, self.window);
+    [self _finishPendingMCPRefreshSuccess:NO phase:nil snapshotID:nil capturedAt:nil appName:nil error:error];
+}
+
+- (void)requestMCPRefreshWithRequestID:(NSString *)requestID
+                             waitUntil:(LKMCPRefreshWaitUntil)waitUntil
+                             timeoutMs:(NSInteger)timeoutMs
+                            completion:(void (^)(BOOL success,
+                                                 NSString *_Nullable phase,
+                                                 NSString *_Nullable snapshotID,
+                                                 NSString *_Nullable capturedAt,
+                                                 NSString *_Nullable appName,
+                                                 NSError *_Nullable error))completion {
+    if (self.pendingMCPRefreshCompletion) {
+        if (completion) {
+            NSError *error = LookinErrorMake(NSLocalizedString(@"Refresh busy", nil), NSLocalizedString(@"已有一个 MCP 刷新请求正在处理。", nil));
+            completion(NO, nil, nil, nil, nil, error);
+        }
+        return;
+    }
+    if (self.isFetchingHierarchy || self.isFetchingDetails) {
+        if (completion) {
+            NSError *error = LookinErrorMake(NSLocalizedString(@"Refresh busy", nil), NSLocalizedString(@"当前已有 Lookin 刷新正在进行中。", nil));
+            completion(NO, nil, nil, nil, nil, error);
+        }
+        return;
+    }
+    if (requestID.length == 0) {
+        if (completion) {
+            NSError *error = LookinErrorMake(NSLocalizedString(@"Refresh failed", nil), NSLocalizedString(@"MCP 刷新请求缺少 request id。", nil));
+            completion(NO, nil, nil, nil, nil, error);
+        }
+        return;
+    }
+    if (![LKAppsManager sharedInstance].inspectingApp) {
+        if (completion) {
+            NSError *error = LookinErrorMake(NSLocalizedString(@"Refresh failed", nil), NSLocalizedString(@"当前没有可刷新的 inspecting app。", nil));
+            completion(NO, nil, nil, nil, nil, error);
+        }
+        return;
+    }
+    self.pendingMCPRefreshCompletion = [completion copy];
+    self.pendingMCPRefreshRequestID = [requestID copy];
+    self.pendingMCPRefreshWaitUntil = waitUntil;
+    self.pendingMCPRefreshDidStartDetails = NO;
+    NSInteger clampedTimeoutMs = MAX(timeoutMs, 500);
+    dispatch_queue_t queue = dispatch_get_main_queue();
+    dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    self.pendingMCPRefreshTimeoutSource = source;
+    dispatch_source_set_timer(source, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(clampedTimeoutMs * NSEC_PER_MSEC)), DISPATCH_TIME_FOREVER, 0);
+    __weak typeof(self) weakSelf = self;
+    dispatch_source_set_event_handler(source, ^{
+        [weakSelf _finishPendingMCPRefreshSuccess:NO phase:nil snapshotID:nil capturedAt:nil appName:nil error:LookinErrorMake(NSLocalizedString(@"Refresh timeout", nil), NSLocalizedString(@"MCP 刷新等待超时。", nil))];
+    });
+    dispatch_resume(source);
+    [self _handleReload];
+}
+
+- (void)_handlePendingMCPRefreshAfterHierarchy {
+    if (!self.pendingMCPRefreshCompletion) {
+        return;
+    }
+    if (self.pendingMCPRefreshWaitUntil == LKMCPRefreshWaitUntilHierarchy) {
+        [self _finishPendingMCPRefreshSuccess:YES phase:@"hierarchy" snapshotID:nil capturedAt:nil appName:nil error:nil];
+    } else {
+        self.pendingMCPRefreshDidStartDetails = YES;
+        if (![LKStaticAsyncUpdateManager sharedInstance].isUpdating) {
+            [self _finishPendingMCPRefreshSuccess:YES phase:@"details" snapshotID:nil capturedAt:nil appName:nil error:nil];
+        }
+    }
+}
+
+- (void)_handlePendingMCPRefreshAfterDetails {
+    if (!self.pendingMCPRefreshCompletion) {
+        return;
+    }
+    [self _finishPendingMCPRefreshSuccess:YES phase:@"details" snapshotID:nil capturedAt:nil appName:nil error:nil];
+}
+
+- (void)_finishPendingMCPRefreshSuccess:(BOOL)success
+                                  phase:(NSString *_Nullable)phase
+                              snapshotID:(NSString *_Nullable)snapshotID
+                              capturedAt:(NSString *_Nullable)capturedAt
+                                appName:(NSString *_Nullable)appName
+                                  error:(NSError *_Nullable)error {
+    if (!self.pendingMCPRefreshCompletion) {
+        return;
+    }
+    if (self.pendingMCPRefreshTimeoutSource) {
+        dispatch_source_cancel(self.pendingMCPRefreshTimeoutSource);
+        self.pendingMCPRefreshTimeoutSource = nil;
+    }
+    void (^completion)(BOOL, NSString *, NSString *, NSString *, NSString *, NSError *) = self.pendingMCPRefreshCompletion;
+    self.pendingMCPRefreshCompletion = nil;
+    self.pendingMCPRefreshRequestID = nil;
+    self.pendingMCPRefreshDidStartDetails = NO;
+    completion(success, phase, snapshotID, capturedAt, appName, error);
 }
 
 @end

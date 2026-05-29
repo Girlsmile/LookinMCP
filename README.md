@@ -88,6 +88,7 @@ swift test
 ### Tools
 
 - `lookin.screen`：返回当前或指定 snapshot 的紧凑页面摘要。
+- `lookin.refresh`：请求 Lookin Desktop 刷新当前页面；默认 `mode=ids`，只返回 `sid/prev_sid/phase/changed/ms`。
 - `lookin.find`：按 `vc_name`、`ivar_name`、`class_name`、`text` 定位候选节点；传 `mode=ids` 时只返回 `sid/total/ids`。
 - `lookin.inspect`：读取单个节点的布局、样式和关系证据；传 `mode=brief` 时只返回短字段节点摘要，传 `mode=evidence` 时只返回显式请求的证据 section。
 - `lookin.capture`：按节点裁剪局部截图。
@@ -112,11 +113,24 @@ swift test
 
 如果你的目标是让 LLM 少吃上下文，推荐这样调用：
 
-1. `lookin.find` + `mode=ids`
-2. `lookin.inspect` + `mode=brief`
-3. 按需读取 `layout`、`style`、`relations`、`children`、`siblings`、`subtree` 或 `capture`
+1. 页面刚切换或状态可能过期时，先调用 `lookin.refresh` + `mode=ids`，只拿新的 `sid` 和 `phase`。
+2. 已知目标时调用 `lookin.find` + `mode=ids`，传入上一步的 `sid`。
+3. 对最相关节点调用 `lookin.inspect` + `mode=brief`。
+4. 按需读取 `layout`、`style`、`relations`、`children`、`siblings`、`subtree` 或 `capture`。
 
 例如：
+
+```json
+{
+  "name": "lookin.refresh",
+  "arguments": {
+    "mode": "ids",
+    "wait_until": "details"
+  }
+}
+```
+
+然后：
 
 ```json
 {

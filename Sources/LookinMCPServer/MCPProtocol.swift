@@ -145,6 +145,7 @@ enum MCPServerError: LocalizedError {
     case nodeNotFound(String)
     case screenshotUnavailable
     case cropFailed(String)
+    case refreshUnavailable(String)
     case invalidSnapshot(String)
     case io(String)
     case invalidCommandLine(String)
@@ -152,7 +153,7 @@ enum MCPServerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidArguments(let message), .invalidSnapshot(let message), .io(let message), .cropFailed(let message), .invalidCommandLine(let message):
+        case .invalidArguments(let message), .invalidSnapshot(let message), .io(let message), .cropFailed(let message), .refreshUnavailable(let message), .invalidCommandLine(let message):
             return message
         case .portUnavailable(let port, let detail):
             return "PORT_UNAVAILABLE: localhost:\(port) 无法启动。\(detail)"
@@ -245,6 +246,14 @@ extension JSONEncoder {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return encoder
+    }
+}
+
+extension JSONDecoder {
+    static func lookinJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
     }
 }
 

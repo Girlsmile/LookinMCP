@@ -56,7 +56,7 @@ enabled = true
 tool_timeout_sec = 10000
 ```
 
-重启客户端后，应能看到 `lookin.screen`、`lookin.find`、`lookin.inspect`、`lookin.capture`、`lookin.raw` 五个工具，以及对应的 resources / prompts。
+重启客户端后，应能看到 `lookin.refresh`、`lookin.screen`、`lookin.find`、`lookin.inspect`、`lookin.capture`、`lookin.raw` 六个工具，以及对应的 resources / prompts。
 
 ## 5. 首次验证
 
@@ -64,18 +64,20 @@ tool_timeout_sec = 10000
 
 1. 在 Lookin 中连接到目标 iOS App，并确认已经抓到 hierarchy。
 2. 访问 `/status`，确认服务在线。
-3. 在 MCP 客户端里调用 `lookin.screen`。
-4. 再调用 `lookin.find`，传入 `mode=ids`，确认能拿到 `sid/total/ids`。
-5. 对一个节点调用 `lookin.inspect`，传入 `mode=brief`，确认能拿到短字段节点摘要。
-6. 按需读取 section resource，例如 `lookin://snapshots/{sid}/nodes/{id}/layout`。
+3. 在 MCP 客户端里调用 `lookin.refresh`，传入 `mode=ids`，确认能拿到 `sid/phase/changed/ms`。
+4. 调用 `lookin.screen` 或直接调用 `lookin.find`，传入上一步的 `sid`。
+5. 再调用 `lookin.find`，传入 `mode=ids`，确认能拿到 `sid/total/ids`。
+6. 对一个节点调用 `lookin.inspect`，传入 `mode=brief`，确认能拿到短字段节点摘要。
+7. 按需读取 section resource，例如 `lookin://snapshots/{sid}/nodes/{id}/layout`。
 
 ## 低 token 查询模式
 
 LookinMCP 支持面向 LLM 的低 token 查询路径。推荐流程是：
 
-1. `lookin.find` + `mode=ids`
-2. `lookin.inspect` + `mode=brief`
-3. 按需读取 section resource
+1. 页面刚切换或 snapshot 可能过期时，先 `lookin.refresh` + `mode=ids`
+2. `lookin.find` + `mode=ids`
+3. `lookin.inspect` + `mode=brief`
+4. 按需读取 section resource
 
 短字段含义：
 

@@ -4,6 +4,9 @@
 //
 
 #import "LKMCPHostManager.h"
+#import "LKExportManager.h"
+#import "LKNavigationManager.h"
+#import "LKStaticWindowController.h"
 #import <AppKit/AppKit.h>
 
 NSNotificationName const LKMCPHostManagerDidUpdateNotification = @"LKMCPHostManagerDidUpdateNotification";
@@ -15,6 +18,7 @@ static NSTimeInterval const LKMCPPollInterval = 2;
 static NSInteger const LKMCPMaxConsecutiveStatusFailures = 3;
 static NSTimeInterval const LKMCPReconnectBaseDelay = 1;
 static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
+static NSTimeInterval const LKMCPControlPollInterval = 0.2;
 
 static void LKMCPHostLog(NSString *message) {
     if (message.length == 0) {
@@ -47,6 +51,8 @@ static void LKMCPHostLog(NSString *message) {
 @property(nonatomic, assign) NSInteger reconnectAttempt;
 @property(nonatomic, assign) NSInteger consecutiveStatusFailures;
 @property(nonatomic, strong, nullable) NSTimer *reconnectTimer;
+@property(nonatomic, strong, nullable) NSTimer *controlPollTimer;
+@property(nonatomic, strong) NSMutableSet<NSString *> *processingRefreshRequestIDs;
 
 @end
 
@@ -69,6 +75,7 @@ static void LKMCPHostLog(NSString *message) {
         _statusSummaryText = @"Lookin 当前未托管 MCP Host";
         _state = LKMCPHostStateOff;
         _autoReconnectEnabled = YES;
+        _processingRefreshRequestIDs = [NSMutableSet set];
         _session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_handleApplicationWillTerminate) name:NSApplicationWillTerminateNotification object:nil];
     }
@@ -79,6 +86,7 @@ static void LKMCPHostLog(NSString *message) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.pollTimer invalidate];
     [self.reconnectTimer invalidate];
+    [self.controlPollTimer invalidate];
     [self.session invalidateAndCancel];
 }
 
@@ -149,6 +157,7 @@ static void LKMCPHostLog(NSString *message) {
 
     self.task = task;
     [self _ensurePolling];
+    [self _ensureControlPolling];
     [self _pollStatus];
 }
 
@@ -162,6 +171,8 @@ static void LKMCPHostLog(NSString *message) {
     self.pollTimer = nil;
     [self.reconnectTimer invalidate];
     self.reconnectTimer = nil;
+    [self.controlPollTimer invalidate];
+    self.controlPollTimer = nil;
     self.stderrPipe.fileHandleForReading.readabilityHandler = nil;
     [self.task terminate];
     self.task = nil;
@@ -244,6 +255,135 @@ static void LKMCPHostLog(NSString *message) {
         return;
     }
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:LKMCPPollInterval target:self selector:@selector(_pollStatus) userInfo:nil repeats:YES];
+}
+
+- (void)_ensureControlPolling {
+    if (self.controlPollTimer) {
+        return;
+    }
+    self.controlPollTimer = [NSTimer scheduledTimerWithTimeInterval:LKMCPControlPollInterval target:self selector:@selector(_pollControlRequests) userInfo:nil repeats:YES];
+}
+
+- (void)_pollControlRequests {
+    NSString *snapshotRoot = [[LKExportManager sharedInstance] snapshotRootDirectoryPath];
+    NSString *requestsPath = [[snapshotRoot stringByAppendingPathComponent:@"control"] stringByAppendingPathComponent:@"requests"];
+    NSArray<NSString *> *fileNames = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:requestsPath error:nil];
+    for (NSString *fileName in fileNames) {
+        if (![fileName.pathExtension isEqualToString:@"json"]) {
+            continue;
+        }
+        NSString *requestPath = [requestsPath stringByAppendingPathComponent:fileName];
+        NSData *data = [NSData dataWithContentsOfFile:requestPath];
+        if (data.length == 0) {
+            continue;
+        }
+        NSError *jsonError = nil;
+        NSDictionary *request = [NSJSONSerialization JSONObjectWithData:data options:kNilOptions error:&jsonError];
+        if (![request isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        NSString *requestID = [request[@"request_id"] isKindOfClass:[NSString class]] ? request[@"request_id"] : nil;
+        if (requestID.length == 0 || [self.processingRefreshRequestIDs containsObject:requestID]) {
+            continue;
+        }
+        [self.processingRefreshRequestIDs addObject:requestID];
+        [self _handleRefreshControlRequest:request filePath:requestPath];
+    }
+}
+
+- (void)_handleRefreshControlRequest:(NSDictionary *)request filePath:(NSString *)requestPath {
+    NSString *requestID = [request[@"request_id"] isKindOfClass:[NSString class]] ? request[@"request_id"] : @"";
+    NSString *waitUntilText = [request[@"wait_until"] isKindOfClass:[NSString class]] ? request[@"wait_until"] : @"details";
+    NSInteger timeoutMs = [request[@"timeout_ms"] respondsToSelector:@selector(integerValue)] ? [request[@"timeout_ms"] integerValue] : 20000;
+    LKMCPRefreshWaitUntil waitUntil = [waitUntilText isEqualToString:@"hierarchy"] ? LKMCPRefreshWaitUntilHierarchy : LKMCPRefreshWaitUntilDetails;
+    NSString *prevSnapshotID = self.snapshotID;
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    LKStaticWindowController *windowController = [LKNavigationManager sharedInstance].staticWindowController;
+    if (!windowController) {
+        [self _writeRefreshResponseWithRequestID:requestID ok:NO phase:@"none" snapshotID:self.snapshotID previousSnapshotID:prevSnapshotID capturedAt:self.capturedAtText appName:nil started:started error:@"NO_STATIC_WINDOW: 当前没有可用的 Lookin static window。"];
+        [self.processingRefreshRequestIDs removeObject:requestID];
+        [[NSFileManager defaultManager] removeItemAtPath:requestPath error:nil];
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    [windowController requestMCPRefreshWithRequestID:requestID waitUntil:waitUntil timeoutMs:timeoutMs completion:^(BOOL success, NSString *phase, NSString *snapshotID, NSString *capturedAt, NSString *appName, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+            NSString *resolvedSnapshotID = snapshotID ?: [self _currentSnapshotValueForKey:@"snapshot_id"] ?: self.snapshotID;
+            NSString *resolvedCapturedAt = capturedAt ?: [self _currentSnapshotValueForKey:@"captured_at"] ?: self.capturedAtText;
+            NSString *resolvedAppName = appName ?: [self _currentSnapshotAppName];
+            [self _writeRefreshResponseWithRequestID:requestID
+                                                  ok:success
+                                               phase:phase ?: (success ? waitUntilText : @"none")
+                                          snapshotID:resolvedSnapshotID
+                                  previousSnapshotID:prevSnapshotID
+                                          capturedAt:resolvedCapturedAt
+                                             appName:resolvedAppName
+                                             started:started
+                                               error:error.localizedDescription];
+            [self.processingRefreshRequestIDs removeObject:requestID];
+            [[NSFileManager defaultManager] removeItemAtPath:requestPath error:nil];
+            [self _pollStatus];
+        });
+    }];
+}
+
+- (void)_writeRefreshResponseWithRequestID:(NSString *)requestID
+                                        ok:(BOOL)ok
+                                     phase:(NSString *)phase
+                                snapshotID:(NSString *)snapshotID
+                        previousSnapshotID:(NSString *)previousSnapshotID
+                                capturedAt:(NSString *)capturedAt
+                                   appName:(NSString *)appName
+                                   started:(CFAbsoluteTime)started
+                                     error:(NSString *)error {
+    if (requestID.length == 0) {
+        return;
+    }
+    NSString *snapshotRoot = [[LKExportManager sharedInstance] snapshotRootDirectoryPath];
+    NSString *responsesPath = [[snapshotRoot stringByAppendingPathComponent:@"control"] stringByAppendingPathComponent:@"responses"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:responsesPath withIntermediateDirectories:YES attributes:nil error:nil];
+    NSInteger elapsedMs = MAX(0, (NSInteger)round((CFAbsoluteTimeGetCurrent() - started) * 1000.0));
+    NSMutableDictionary *response = [NSMutableDictionary dictionary];
+    response[@"request_id"] = requestID;
+    response[@"ok"] = @(ok);
+    response[@"sid"] = snapshotID ?: [NSNull null];
+    response[@"prev_sid"] = previousSnapshotID ?: [NSNull null];
+    response[@"phase"] = phase ?: @"none";
+    response[@"changed"] = @((snapshotID.length > 0 && previousSnapshotID.length > 0) ? ![snapshotID isEqualToString:previousSnapshotID] : (snapshotID.length > 0));
+    response[@"ms"] = @(elapsedMs);
+    response[@"captured_at"] = capturedAt ?: [NSNull null];
+    response[@"app"] = appName ?: [NSNull null];
+    response[@"error"] = error ?: [NSNull null];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:response options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
+    NSString *responsePath = [responsesPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.json", requestID]];
+    [data writeToFile:responsePath options:NSDataWritingAtomic error:nil];
+}
+
+- (NSString *)_currentSnapshotValueForKey:(NSString *)key {
+    NSString *snapshotRoot = [[LKExportManager sharedInstance] snapshotRootDirectoryPath];
+    NSString *snapshotPath = [[snapshotRoot stringByAppendingPathComponent:@"current"] stringByAppendingPathComponent:@"snapshot.json"];
+    NSData *data = [NSData dataWithContentsOfFile:snapshotPath];
+    if (data.length == 0) {
+        return nil;
+    }
+    NSDictionary *snapshot = [NSJSONSerialization JSONObjectWithData:data options:kNilOptions error:nil];
+    id value = [snapshot isKindOfClass:[NSDictionary class]] ? snapshot[key] : nil;
+    return [value isKindOfClass:[NSString class]] ? value : nil;
+}
+
+- (NSString *)_currentSnapshotAppName {
+    NSString *snapshotRoot = [[LKExportManager sharedInstance] snapshotRootDirectoryPath];
+    NSString *snapshotPath = [[snapshotRoot stringByAppendingPathComponent:@"current"] stringByAppendingPathComponent:@"snapshot.json"];
+    NSData *data = [NSData dataWithContentsOfFile:snapshotPath];
+    if (data.length == 0) {
+        return nil;
+    }
+    NSDictionary *snapshot = [NSJSONSerialization JSONObjectWithData:data options:kNilOptions error:nil];
+    NSDictionary *app = [snapshot[@"app"] isKindOfClass:[NSDictionary class]] ? snapshot[@"app"] : nil;
+    NSString *appName = [app[@"app_name"] isKindOfClass:[NSString class]] ? app[@"app_name"] : nil;
+    return appName;
 }
 
 - (void)_pollStatus {
