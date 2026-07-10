@@ -1,3 +1,8 @@
 .DS_Store
 .build/
 .codex/
+build/**
+!build/
+!build/release/
+!build/release/output/
+!build/release/output/LookinMCP.dmg

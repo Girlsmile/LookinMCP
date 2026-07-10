@@ -55,6 +55,7 @@ BUILD_SETTINGS="$(
     -workspace "$WORKSPACE_PATH" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
     -showBuildSettings 2>/dev/null
 )"
 

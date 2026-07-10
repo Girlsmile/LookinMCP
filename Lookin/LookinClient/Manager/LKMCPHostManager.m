@@ -8,6 +8,8 @@
 #import "LKNavigationManager.h"
 #import "LKStaticWindowController.h"
 #import <AppKit/AppKit.h>
+#import <signal.h>
+#import <unistd.h>
 
 NSNotificationName const LKMCPHostManagerDidUpdateNotification = @"LKMCPHostManagerDidUpdateNotification";
 
@@ -19,6 +21,7 @@ static NSInteger const LKMCPMaxConsecutiveStatusFailures = 3;
 static NSTimeInterval const LKMCPReconnectBaseDelay = 1;
 static NSTimeInterval const LKMCPReconnectMaxDelay = 10;
 static NSTimeInterval const LKMCPControlPollInterval = 0.2;
+static NSTimeInterval const LKMCPStaleHelperTerminationTimeout = 1.5;
 
 static void LKMCPHostLog(NSString *message) {
     if (message.length == 0) {
@@ -106,6 +109,7 @@ static void LKMCPHostLog(NSString *message) {
         return;
     }
     LKMCPHostLog([NSString stringWithFormat:@"使用 helper: %@", executablePath]);
+    [self _terminateStaleHelperOnConfiguredPortIfNeeded];
 
     self.stopRequestedByUser = NO;
     self.restartPending = NO;
@@ -262,6 +266,31 @@ static void LKMCPHostLog(NSString *message) {
         return;
     }
     self.controlPollTimer = [NSTimer scheduledTimerWithTimeInterval:LKMCPControlPollInterval target:self selector:@selector(_pollControlRequests) userInfo:nil repeats:YES];
+}
+
+- (void)_terminateStaleHelperOnConfiguredPortIfNeeded {
+    NSArray<NSNumber *> *processIDs = [self.class _listeningProcessIDsOnPort:LKMCPPort];
+    for (NSNumber *processIDNumber in processIDs) {
+        pid_t processID = (pid_t)processIDNumber.intValue;
+        if (processID <= 0 || processID == getpid()) {
+            continue;
+        }
+        if (![self.class _processIDBelongsToLookinMCPHelper:processID]) {
+            LKMCPHostLog([NSString stringWithFormat:@"端口 %hu 已被非 lookin-mcp 进程占用，跳过自动清理：pid=%d", LKMCPPort, processID]);
+            continue;
+        }
+
+        LKMCPHostLog([NSString stringWithFormat:@"发现旧 lookin-mcp helper 占用端口 %hu，准备终止：pid=%d", LKMCPPort, processID]);
+        if (kill(processID, SIGTERM) != 0) {
+            LKMCPHostLog([NSString stringWithFormat:@"终止旧 helper 失败：pid=%d", processID]);
+            continue;
+        }
+        if (![self.class _waitUntilProcessExits:processID timeout:LKMCPStaleHelperTerminationTimeout]) {
+            LKMCPHostLog([NSString stringWithFormat:@"旧 helper 未及时退出，强制终止：pid=%d", processID]);
+            kill(processID, SIGKILL);
+            [self.class _waitUntilProcessExits:processID timeout:0.5];
+        }
+    }
 }
 
 - (void)_pollControlRequests {
@@ -612,6 +641,85 @@ static void LKMCPHostLog(NSString *message) {
         return NO;
     }
     return [[NSFileManager defaultManager] isExecutableFileAtPath:path];
+}
+
++ (NSArray<NSNumber *> *)_listeningProcessIDsOnPort:(uint16_t)port {
+    NSString *output = [self _trimmedOutputFromExecutable:@"/usr/sbin/lsof"
+                                                arguments:@[@"-nP", [NSString stringWithFormat:@"-tiTCP:%hu", port], @"-sTCP:LISTEN"]];
+    if (output.length == 0) {
+        return @[];
+    }
+
+    NSMutableOrderedSet<NSNumber *> *processIDs = [NSMutableOrderedSet orderedSet];
+    NSArray<NSString *> *lines = [output componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (trimmed.length == 0) {
+            continue;
+        }
+        NSInteger processID = trimmed.integerValue;
+        if (processID > 0) {
+            [processIDs addObject:@(processID)];
+        }
+    }
+    return processIDs.array;
+}
+
++ (BOOL)_processIDBelongsToLookinMCPHelper:(pid_t)processID {
+    NSString *processIDText = [NSString stringWithFormat:@"%d", processID];
+    NSString *command = [self _trimmedOutputFromExecutable:@"/bin/ps" arguments:@[@"-p", processIDText, @"-o", @"comm="]];
+    NSString *arguments = [self _trimmedOutputFromExecutable:@"/bin/ps" arguments:@[@"-p", processIDText, @"-o", @"args="]];
+    if ([command.lastPathComponent isEqualToString:LKMCPBundledExecutableName]) {
+        return YES;
+    }
+    return [arguments containsString:LKMCPBundledExecutableName] && [arguments containsString:@"--transport"] && [arguments containsString:@"http"];
+}
+
++ (BOOL)_waitUntilProcessExits:(pid_t)processID timeout:(NSTimeInterval)timeout {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
+        if (![self _processExists:processID]) {
+            return YES;
+        }
+        [NSThread sleepForTimeInterval:0.05];
+    }
+    return ![self _processExists:processID];
+}
+
++ (BOOL)_processExists:(pid_t)processID {
+    if (processID <= 0) {
+        return NO;
+    }
+    return kill(processID, 0) == 0 || errno == EPERM;
+}
+
++ (NSString *)_trimmedOutputFromExecutable:(NSString *)executable arguments:(NSArray<NSString *> *)arguments {
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:executable]) {
+        return @"";
+    }
+
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = executable;
+    task.arguments = arguments;
+
+    NSPipe *outputPipe = [NSPipe pipe];
+    task.standardOutput = outputPipe;
+    task.standardError = [NSPipe pipe];
+
+    @try {
+        [task launch];
+        [task waitUntilExit];
+    } @catch (__unused NSException *exception) {
+        return @"";
+    }
+
+    if (task.terminationStatus != 0) {
+        return @"";
+    }
+
+    NSData *data = [outputPipe.fileHandleForReading readDataToEndOfFile];
+    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
 }
 
 + (BOOL)_mainBundleLooksLikeApp {
